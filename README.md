@@ -1,56 +1,59 @@
-# ♟️ Google Apps Script Chess (Pro UI Edition)
+# Serverless Google Apps Script Chess
 
-A professional-grade Chess application built entirely within **Google Apps Script** (GAS), meticulously designed to mimic the premium user experience of Chess.com. This project combines a high-performance WASM-powered engine architecture with a sleek, responsive frontend.
+A high-performance, real-time multiplayer chess application built entirely on **Google Apps Script** (GAS) and HTML/JS. This project demonstrates how to leverage serverless architectures to create a responsive, production-grade web application with complex state synchronization.
 
 ---
 
-## ✨ Features
+## ✨ Advanced Features
 
-- **🌐 Lightning-Fast Online Multiplayer:** Real-time play powered by Google Apps Script `CacheService` for sub-50ms synchronization, paired with optimistic UI updates for zero-lag piece movement.
-- **🎨 Chess.com Design System:** 
-    - **Dark Mode Aesthetic:** Built with the official Chess.com color palette (`#312e2b` / `#262421`).
-    - **Tactile UI:** 3D-effect action buttons and a clean, responsive split-pane layout.
-    - **Classic Board:** Green and cream palette (`#739552` / `#ebecd0`) for optimal focus.
-- **🔍 Professional Game Review:**
-    - **Move Classification:** Industry-standard badges for *Brilliant (!!)*, *Great (!)*, *Best (★)*, *Inaccuracy*, *Mistake*, and *Blunder*.
-    - **Accuracy Rings:** Visual SVG circular progress indicators for performance benchmarking.
-    - **Elo Estimation:** ACPL-based heuristic model to estimate performance rating.
-- **📈 Advanced Evaluation Bar:** Live engine feedback with a professional sigmoid-based advantage visualization.
-- **⚡ High-Performance Engine Pool:**
-    - **Multi-threaded Analysis:** Detects CPU cores and parallelizes full-game reviews using a pool of WASM Stockfish workers.
-    - **WASM Powered:** Leverages WebAssembly for near-native calculation speeds.
-- **🧩 Offline Puzzle Generator:** Dynamic tactical sequence extraction running fully on the local CPU.
-- **🌙 Dynamic Styling:** Perfectly isolated piece assets that remain crisp and high-contrast in all theme modes.
+- **🌐 Lightning-Fast Multiplayer:** Real-time play powered by Google Apps Script `CacheService` and `LockService`. Achieves sub-50ms synchronization to bypass traditional Google Sheets latency.
+- **🎨 Pro UI/UX (Chess.com Style):** A pixel-perfect dark mode interface featuring tactile 3D buttons, a responsive split-pane layout, and the classic green/cream board aesthetic.
+- **⚡ High-Performance Engine Pool:** A multi-threaded background analysis system using a pool of **WASM Stockfish** workers. Detects your CPU core count to parallelize full-game reviews.
+- **🔍 Professional Review Suite:** 
+    - **Move Classification:** Industry-standard badges for *Brilliant (!!)*, *Great (!)*, *Best (★)*, and *Blunders*.
+    - **Accuracy Rings:** SVG circular indicators for performance benchmarking.
+    - **Elo Estimation:** ACPL-based heuristic model to estimate performance ratings.
+- **📈 Dynamic Evaluation Bar:** Real-time engine feedback using a sigmoid-based visualization for smoother advantage transitions.
+- **🛡️ Robust System Resilience:** 
+    - **Exponential Backoff:** Intelligent polling logic that retries failed connections with increasing delays.
+    - **Hard Sync:** Automated state reconciliation that fixes desynchronization without page refreshes.
+    - **Connection Monitoring:** Live status indicators (Green/Yellow/Red) with an auto-locking board during instability.
+- **♟️ Advanced Gameplay:** Supports **Premove Queueing**, **Bidirectional Takebacks** (with handshake logic), and **Right-Click Visualization** (Arrows & Circles).
 
 ---
 
 ## 🏗️ Architecture
 
-- **`Code.gs`**: The GAS backend. Manages rooms and game states via `CacheService` with a persistent Sheets fallback.
-- **`EnginePool` (Multi-threaded)**: A sophisticated background manager that distributes evaluation tasks across multiple Web Workers using `navigator.hardwareConcurrency`.
-- **Frontend Logic**: Implements Chess.com-style move list rendering, debounced evaluations, and smooth SVG-based visual feedback.
+- **Backend (`Code.gs`)**: Uses `CacheService` as a high-speed, serverless real-time database. All state mutations are protected by `LockService` to prevent race conditions during simultaneous moves or takeback requests. Standardized JSON error handling ensures the client never receives raw HTML error pages.
+- **Frontend (`App.html`)**: Implements **Optimistic UI updates** (Client-side Prediction). Moves are rendered instantly on the local `chess.js` instance before being synchronized asynchronously with the server.
+- **Worker Pool (`PuzzleGen.html`)**: Manages a singleton pool of Stockfish.js workers, utilizing **WebAssembly** for near-native calculation speeds for both live evaluation and batch game processing.
 
 ---
 
 ## 🚀 Deployment Instructions
 
-1. Create a new project at [script.google.com](https://script.google.com/).
-2. Copy the contents of `Code.gs` into the script editor.
-3. Create new HTML files matching the names in this repository:
-    - `Index.html`, `App.html`, `Stylesheet.html`, `Pieces.html`, `Engine.html`, `AI.html`, `Stockfish.html`, `PuzzleGen.html`.
+### Method 1: Google Apps Script Web Editor
+1. Go to [script.google.com](https://script.google.com/) and create a new project.
+2. Copy the contents of `Code.gs` into the `Code.gs` file in the editor.
+3. Create new HTML files for each `.html` file in this repository (e.g., `Index.html`, `App.html`, `Stylesheet.html`, etc.) and paste the corresponding code.
 4. Click **Deploy > New deployment**.
-5. Select type **Web app**, execute as **Me**, and set access to **Anyone**.
-6. Deploy and enjoy your personal professional-grade chess server!
+5. Select **Web app**, set "Execute as" to **Me**, and "Who has access" to **Anyone**.
+6. Copy the web app URL and start playing!
+
+### Method 2: Clasp (CLI)
+1. Install `clasp`: `npm install -g @google/clasp`.
+2. Login: `clasp login`.
+3. Clone/Create project: `clasp create --title "GAS Chess" --type webapp`.
+4. Push files: `clasp push`.
 
 ---
 
-## 🎨 Design Notes
+## 👨‍💻 Author
 
-- **Optimized Palette:** Uses standard professional hex codes for board squares and piece highlighting.
-- **Responsive Layout:** Flexbox/Grid architecture that adapts from wide desktop monitors to mobile touchscreens.
-- **Performance Monitor:** Integrated real-time readout of thread usage and execution times during analysis.
+- **Author:** Abdalrahman
+- **Website:** [cancellls.com](https://cancellls.com)
+- **License:** MIT
 
 ---
 
-## 📝 License
-Released under the MIT License. Embedded `chess.js` logic belongs to its original creator (Jeff Hlywa). `Stockfish.js` is bundled for evaluation logic.
+*Note: This application requires an active internet connection for multiplayer synchronization. Offline Puzzles and AI modes run locally on your device's CPU via Web Workers.*

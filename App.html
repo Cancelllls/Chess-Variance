@@ -27,11 +27,27 @@ let isRightClickDragging = false;
 let rightClickStartSq = null;
 let currentRightClickSq = null;
 
+// Resilience State
+let pollRetryCount = 0;
+let backoffDelay = 1000;
+let connectionStatus = 'green'; // 'green', 'yellow', 'red'
+
+function setConnectionStatus(status) {
+  connectionStatus = status;
+  const dot = document.getElementById('connection-status');
+  dot.className = 'conn-dot ' + status;
+  
+  if (status === 'red') {
+    document.getElementById('disconnect-modal').classList.remove('hidden');
+  }
+}
+
 // --- WELCOME SCREEN LOGIC ---
 
 function showMenu(id) {
   document.querySelectorAll('.menu-section').forEach(el => el.classList.add('hidden'));
-  document.getElementById(id).classList.remove('hidden');
+  const target = document.getElementById(id);
+  if (target) target.classList.remove('hidden');
 }
 
 function closeWelcomeScreen() {
@@ -41,12 +57,13 @@ function closeWelcomeScreen() {
 }
 
 function openWelcomeScreen() {
-  if (pollInterval) clearInterval(pollInterval);
+  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
   document.getElementById('welcome-screen').classList.remove('hidden');
   document.getElementById('main-app').style.filter = 'blur(5px)';
   document.getElementById('main-app').style.pointerEvents = 'none';
   showMenu('menu-main');
   roomId = null;
+  setConnectionStatus('green');
 }
 
 function startLocalMultiplayer() {
@@ -106,8 +123,8 @@ function joinOnlineRoom() {
   undoBtn.disabled = false;
   try {
     google.script.run
-      .withSuccessHandler(state => {
-        if (state === null) {
+      .withSuccessHandler(res => {
+        if (!res || !res.success) {
            document.getElementById('online-status').innerText = "Room not found.";
            return;
         }
@@ -115,12 +132,9 @@ function joinOnlineRoom() {
         gameMode = 'online';
         playerColor = 'b';
         boardFlipped = true;
-        if (state) {
-          if (state.indexOf('[') !== -1 || state.indexOf('1.') === 0) {
-            game.load_pgn(state); // Fallback if old PGN format is returned
-          } else {
-            game.load(state); // Load FEN string
-          }
+        const state = res.data;
+        if (state && state.fen) {
+          game.load(state.fen);
         } else {
           game.reset();
         }
@@ -140,68 +154,96 @@ function joinOnlineRoom() {
 
 function startPolling() {
   if (pollInterval) clearInterval(pollInterval);
-  pollInterval = setInterval(() => {
+  pollRetryCount = 0;
+  backoffDelay = 1000;
+
+  const poll = () => {
     if (gameMode !== 'online' || !roomId) return;
-    try {
-      google.script.run
-        .withSuccessHandler(state => {
-          if (!state) return;
+    
+    google.script.run
+      .withSuccessHandler(res => {
+        if (!res || !res.success) {
+          handlePollError("Server error: State unreachable.");
+          return;
+        }
+        
+        // Reset backoff on success
+        pollRetryCount = 0;
+        backoffDelay = 1000;
+        setConnectionStatus('green');
+
+        const state = res.data;
+        const toast = document.getElementById('takeback-toast');
+        const isTakebackActive = !!state.takebackRequest;
+        
+        if (state.takebackRequest && state.takebackRequest !== playerColor) {
+          toast.classList.remove('hidden');
+        } else {
+          toast.classList.add('hidden');
+        }
+
+        if (state.fen !== game.fen()) {
+          const currentHistory = game.history();
+          const serverHistory = new Chess(state.fen).history();
+          const isTakebackDetected = serverHistory.length < currentHistory.length;
           
-          // --- TAKEBACK HANDSHAKE ---
-          const toast = document.getElementById('takeback-toast');
-          const isTakebackActive = !!state.takebackRequest;
-          
-          if (state.takebackRequest && state.takebackRequest !== playerColor) {
-            toast.classList.remove('hidden');
-          } else {
-            toast.classList.add('hidden');
+          // HARD SYNC: If divergence is major or logic fails, force reload
+          const loadSuccess = game.load(state.fen);
+          if (!loadSuccess) {
+              console.error("Corrupted FEN received. Attempting Hard Sync.");
+              game.load(state.fen.split(' ')[0] + ' w KQkq - 0 1'); // Basic recovery
           }
-
-          if (state.fen !== game.fen()) {
-            const currentHistory = game.history();
-            const serverHistory = new Chess(state.fen).history();
-            const isTakebackDetected = serverHistory.length < currentHistory.length;
-            
-            if (state.fen.indexOf('[') !== -1 || state.fen.indexOf('1.') === 0) {
-              game.load_pgn(state.fen);
-            } else {
-              game.load(state.fen);
-            }
-            
-            if (isTakebackDetected) {
-              pendingPremove = null; // Aggressively clear premove on takeback sync
-              clearHighlights();
-              const undoBtn = document.getElementById('btnUndo');
-              if (undoBtn.innerText === "Takeback Proposed...") {
-                undoBtn.innerText = "Undo";
-                undoBtn.disabled = false;
-              }
-            }
-            
-            updateBoard();
-            playSound('move');
-
-            // --- PREMOVE EXECUTION (Suspended if takeback active) ---
-            if (pendingPremove && game.turn() === playerColor && !isTakebackActive) {
-              const move = game.move({ from: pendingPremove.from, to: pendingPremove.to, promotion: 'q' });
-              if (move) {
-                const currentFen = game.fen();
-                google.script.run
-                  .withFailureHandler(errorCallback)
-                  .makeMove(roomId, currentFen, game.game_over(), game.history().length);
-                updateBoard();
-                playSound('move');
-              }
-              pendingPremove = null;
+          
+          if (isTakebackDetected) {
+            pendingPremove = null;
+            clearHighlights();
+            const undoBtn = document.getElementById('btnUndo');
+            if (undoBtn.innerText === "Takeback Proposed...") {
+              undoBtn.innerText = "Undo";
+              undoBtn.disabled = false;
             }
           }
-        })
-        .withFailureHandler(e => {
-          console.warn("Polling error:", e);
-        })
-        .getGameState(roomId);
-    } catch(e){}
-  }, 1000);
+          
+          updateBoard();
+          playSound('move');
+
+          if (pendingPremove && game.turn() === playerColor && !isTakebackActive) {
+            const move = game.move({ from: pendingPremove.from, to: pendingPremove.to, promotion: 'q' });
+            if (move) {
+              const currentFen = game.fen();
+              google.script.run
+                .withFailureHandler(errorCallback)
+                .makeMove(roomId, currentFen, game.game_over(), game.history().length);
+              updateBoard();
+              playSound('move');
+            }
+            pendingPremove = null;
+          }
+        }
+        // Schedule next poll
+        pollInterval = setTimeout(poll, 1000);
+      })
+      .withFailureHandler(e => {
+        handlePollError(e);
+      })
+      .getGameState(roomId);
+  };
+  
+  const handlePollError = (err) => {
+    console.warn("Polling error:", err);
+    pollRetryCount++;
+    setConnectionStatus('yellow');
+    
+    if (pollRetryCount >= 4) {
+      setConnectionStatus('red');
+      return;
+    }
+    
+    backoffDelay *= 2; // Exponential backoff
+    pollInterval = setTimeout(poll, backoffDelay);
+  };
+
+  pollInterval = setTimeout(poll, 1000);
 }
 
 // --- BOARD LOGIC (OPTIMIZED DOM UPDATES) ---
@@ -409,6 +451,12 @@ function handleDragStart(e) {
   clearSVG();
   if (gameMode === 'analysis') { e.preventDefault(); return; }
   
+  // Disable dragging if connection is unstable
+  if (connectionStatus !== 'green' && gameMode === 'online') {
+    e.preventDefault();
+    return;
+  }
+
   const isOpponentTurn = (gameMode === 'online' && game.turn() !== playerColor);
   const isPremoveEnabled = premoveToggle.checked;
   
@@ -519,6 +567,9 @@ function attemptMove(from, to, promo = null) {
       try { 
         // Step 4: Rollback Handling
         google.script.run
+          .withSuccessHandler(res => {
+            if (res && !res.success) errorCallback(res.error);
+          })
           .withFailureHandler(errorCallback)
           .makeMove(roomId, currentFen, isGameOver, moveCount);
       } catch(e) {
@@ -681,11 +732,19 @@ document.getElementById('btnUndo').addEventListener('click', () => {
   if (gameMode === 'online') { 
     if (game.history().length === 0) return;
     const btn = document.getElementById('btnUndo');
+    const originalText = btn.innerText;
     btn.innerText = "Takeback Proposed...";
     btn.disabled = true;
     google.script.run
+      .withSuccessHandler(res => {
+        if (res && !res.success) {
+           btn.innerText = originalText;
+           btn.disabled = false;
+           alert("Takeback Failed: " + (res.message || res.error));
+        }
+      })
       .withFailureHandler(() => {
-        btn.innerText = "Undo";
+        btn.innerText = originalText;
         btn.disabled = false;
       })
       .requestTakeback(roomId, playerColor);
@@ -704,6 +763,9 @@ document.getElementById('btnAcceptTakeback').addEventListener('click', () => {
   const revertedFen = game.fen();
   document.getElementById('takeback-toast').classList.add('hidden');
   google.script.run
+    .withSuccessHandler(res => {
+       if (res && !res.success) alert("Error: " + res.error);
+    })
     .withFailureHandler(e => console.error("Takeback resolution failed:", e))
     .resolveTakeback(roomId, true, revertedFen);
 });
@@ -711,6 +773,9 @@ document.getElementById('btnAcceptTakeback').addEventListener('click', () => {
 document.getElementById('btnDeclineTakeback').addEventListener('click', () => {
   document.getElementById('takeback-toast').classList.add('hidden');
   google.script.run
+    .withSuccessHandler(res => {
+       if (res && !res.success) alert("Error: " + res.error);
+    })
     .withFailureHandler(e => console.error("Takeback resolution failed:", e))
     .resolveTakeback(roomId, false, null);
 });
@@ -727,7 +792,16 @@ document.getElementById('btnTheme').addEventListener('click', () => {
 document.getElementById('btnSave').addEventListener('click', () => {
   const pgn = game.pgn();
   try {
-    google.script.run.withSuccessHandler(() => alert('Saved!')).saveGame(pgn);
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res && res.success) alert('Saved!');
+        else alert('Cloud save failed. Saved locally.');
+      })
+      .withFailureHandler(() => {
+        localStorage.setItem('chess_save', pgn);
+        alert('Saved to local storage.');
+      })
+      .saveGame(pgn);
   } catch (e) {
     localStorage.setItem('chess_save', pgn);
     alert('Saved to local storage.');
@@ -736,9 +810,19 @@ document.getElementById('btnSave').addEventListener('click', () => {
 
 document.getElementById('btnLoad').addEventListener('click', () => {
   try {
-    google.script.run.withSuccessHandler(data => {
-      if (data) { game.load_pgn(data); updateBoard(); }
-    }).loadGame();
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res && res.success && res.data) { game.load_pgn(res.data); updateBoard(); }
+        else {
+           const data = localStorage.getItem('chess_save');
+           if (data) { game.load_pgn(data); updateBoard(); }
+        }
+      })
+      .withFailureHandler(() => {
+        const data = localStorage.getItem('chess_save');
+        if (data) { game.load_pgn(data); updateBoard(); }
+      })
+      .loadGame();
   } catch (e) {
     const data = localStorage.getItem('chess_save');
     if (data) { game.load_pgn(data); updateBoard(); }

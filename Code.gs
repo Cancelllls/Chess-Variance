@@ -37,34 +37,39 @@ function createRoom() {
 }
 
 function getGameState(gameId) {
-  var cache = CacheService.getScriptCache();
-  var cachedData = cache.get('chess_state_' + gameId);
-  var state = null;
-  
-  if (cachedData == null) {
-    try {
-      var ss = SpreadsheetApp.getActiveSpreadsheet();
-      if (ss) {
-        var sheet = ss.getSheetByName("ChessGames");
-        if (sheet) {
-          var data = sheet.getDataRange().getValues();
-          for (var i = 1; i < data.length; i++) {
-            if (data[i][0] == gameId) {
-              state = { fen: data[i][1], takebackRequest: null };
-              cache.put('chess_state_' + gameId, JSON.stringify(state), 21600);
-              return state;
+  try {
+    var cache = CacheService.getScriptCache();
+    var cachedData = cache.get('chess_state_' + gameId);
+    var state = null;
+    
+    if (cachedData == null) {
+      try {
+        var ss = SpreadsheetApp.getActiveSpreadsheet();
+        if (ss) {
+          var sheet = ss.getSheetByName("ChessGames");
+          if (sheet) {
+            var data = sheet.getDataRange().getValues();
+            for (var i = 1; i < data.length; i++) {
+              if (data[i][0] == gameId) {
+                state = { fen: data[i][1], takebackRequest: null };
+                cache.put('chess_state_' + gameId, JSON.stringify(state), 21600);
+                return { success: true, data: state };
+              }
             }
           }
         }
-      }
-    } catch(e) {}
-    return null;
-  }
-  
-  try {
-    return JSON.parse(cachedData);
+      } catch(e) {}
+      return { success: false, error: "ROOM_NOT_FOUND" };
+    }
+    
+    try {
+      state = JSON.parse(cachedData);
+    } catch(e) {
+      state = { fen: cachedData, takebackRequest: null }; // Migration fallback
+    }
+    return { success: true, data: state };
   } catch(e) {
-    return { fen: cachedData, takebackRequest: null }; // Migration fallback
+    return { success: false, error: "CACHE_ERROR", message: e.toString() };
   }
 }
 
@@ -79,39 +84,35 @@ function makeMove(gameId, fenString, isGameOver, moveCount) {
     isGameOver = isGameOver || false;
     moveCount = moveCount || 0;
     
-    if (moveCount === 0 && fenString) {
-      var parts = fenString.split(' ');
-      if (parts.length >= 6) {
-        moveCount = parseInt(parts[5], 10) || 0;
-      }
-    }
-
     if (isGameOver || (moveCount > 0 && moveCount % 10 === 0)) {
-      var ss = SpreadsheetApp.getActiveSpreadsheet();
-      if (ss) {
-        var sheet = ss.getSheetByName("ChessGames");
-        if (!sheet) {
-          sheet = ss.insertSheet("ChessGames");
-          sheet.appendRow(["GameID", "FEN", "LastUpdated"]);
-        }
-        var data = sheet.getDataRange().getValues();
-        var found = false;
-        for (var i = 1; i < data.length; i++) {
-          if (data[i][0] == gameId) {
-            sheet.getRange(i + 1, 2, 1, 2).setValues([[fenString, new Date()]]);
-            found = true;
-            break;
+      try {
+        var ss = SpreadsheetApp.getActiveSpreadsheet();
+        if (ss) {
+          var sheet = ss.getSheetByName("ChessGames");
+          if (!sheet) {
+            sheet = ss.insertSheet("ChessGames");
+            sheet.appendRow(["GameID", "FEN", "LastUpdated"]);
+          }
+          var data = sheet.getDataRange().getValues();
+          var found = false;
+          for (var i = 1; i < data.length; i++) {
+            if (data[i][0] == gameId) {
+              sheet.getRange(i + 1, 2, 1, 2).setValues([[fenString, new Date()]]);
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            sheet.appendRow([gameId, fenString, new Date()]);
           }
         }
-        if (!found) {
-          sheet.appendRow([gameId, fenString, new Date()]);
-        }
+      } catch(e) {
+        console.warn("Sheet backup failed: " + e);
       }
     }
-    return true;
+    return { success: true };
   } catch(e) {
-    console.error("Lock error: " + e);
-    return false;
+    return { success: false, error: "LOCK_TIMEOUT", message: "Server busy." };
   } finally {
     lock.releaseLock();
   }
@@ -121,13 +122,14 @@ function requestTakeback(gameId, playerColor) {
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(5000);
-    var state = getGameState(gameId);
-    if (!state) return false;
+    var res = getGameState(gameId);
+    if (!res.success) return res;
+    var state = res.data;
     state.takebackRequest = playerColor;
     CacheService.getScriptCache().put('chess_state_' + gameId, JSON.stringify(state), 21600);
-    return true;
+    return { success: true };
   } catch(e) {
-    return false;
+    return { success: false, error: "TAKEBACK_ERROR", message: e.toString() };
   } finally {
     lock.releaseLock();
   }
@@ -138,19 +140,19 @@ function resolveTakeback(gameId, isAccepted, fallbackFen) {
   try {
     lock.waitLock(10000);
     var cachedData = CacheService.getScriptCache().get('chess_state_' + gameId);
-    if (!cachedData) return false;
+    if (!cachedData) return { success: false, error: "ROOM_EXPIRED" };
     
     var state = JSON.parse(cachedData);
-    if (!state.takebackRequest) return false; // Already resolved or overridden by a move
+    if (!state.takebackRequest) return { success: false, error: "STALE_REQUEST" }; 
     
     state.takebackRequest = null;
     if (isAccepted && fallbackFen) {
       state.fen = fallbackFen;
     }
     CacheService.getScriptCache().put('chess_state_' + gameId, JSON.stringify(state), 21600);
-    return true;
+    return { success: true };
   } catch(e) {
-    return false;
+    return { success: false, error: "RESOLVE_ERROR", message: e.toString() };
   } finally {
     lock.releaseLock();
   }

@@ -70,7 +70,10 @@
     <!-- SIDEBAR -->
     <div class="sidebar">
       <div class="sidebar-header">
-        <div id="game-info-panel">New Game</div>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div id="game-info-panel">New Game</div>
+          <div id="connection-status" class="conn-dot green" title="Connected"></div>
+        </div>
         <div id="performance-metrics" style="font-size:9px; color:var(--text-secondary); margin-top:4px;">
            <span id="thread-count">--</span> Threads | <span id="execution-time">0</span>ms
         </div>
@@ -159,5 +162,14 @@
   <?!= include('AI'); ?>
   <?!= include('PuzzleGen'); ?>
   <?!= include('App'); ?>
+
+  <!-- Disconnection Modal -->
+  <div id="disconnect-modal" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,0.9); display:flex; justify-content:center; align-items:center; z-index:2000; text-align:center;">
+    <div style="background:var(--bg-panel); padding:40px; border-radius:12px; border:2px solid #fa412d;">
+      <h2 style="color:#fa412d; margin-top:0;">Connection Lost</h2>
+      <p style="color:var(--text-secondary); margin-bottom:30px;">We've lost touch with the server after multiple attempts.</p>
+      <button class="btn-primary" onclick="window.location.reload()" style="background:#fa412d; border-color:#9e2a1e;">Refresh Game</button>
+    </div>
+  </div>
 </body>
 </html>
