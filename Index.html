@@ -124,6 +124,11 @@
         <button class="btn-primary" id="btnReview" class="hidden" style="grid-column: span 2;">Game Review</button>
         <button class="btn-primary" id="btnUndo" style="background:#484542; border-color:#333;">Undo</button>
         <button class="btn-primary" id="btnFlip" style="background:#484542; border-color:#333;">Flip</button>
+        
+        <!-- Takeback, Resign, Draw -->
+        <button class="btn-primary" id="btnDraw" style="background:#484542; border-color:#333; font-size: 14px;">½ Offer Draw</button>
+        <button class="btn-primary" id="btnResign" style="background:#484542; border-color:#333; color: #ff8e8e;">🏳 Resign</button>
+
         <button class="btn-primary" id="btnMenu" style="grid-column: span 2; background:#312e2b; border-color:#111;">Main Menu</button>
         
         <div style="grid-column: span 2; display:flex; gap:5px;">
@@ -152,6 +157,17 @@
       <div class="toast-buttons">
         <button id="btnAcceptTakeback" class="btn-primary" style="background:#81b64c; border-color:#537731; font-size:12px;">Accept</button>
         <button id="btnDeclineTakeback" class="btn-primary" style="background:#fa412d; border-color:#9e2a1e; font-size:12px;">Decline</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Draw Offer Toast -->
+  <div id="draw-toast" class="hidden">
+    <div class="toast-content">
+      <p>Opponent offers a draw.</p>
+      <div class="toast-buttons">
+        <button id="btnAcceptDraw" class="btn-primary" style="background:#81b64c; border-color:#537731; font-size:12px;">Accept</button>
+        <button id="btnDeclineDraw" class="btn-primary" style="background:#fa412d; border-color:#9e2a1e; font-size:12px;">Decline</button>
       </div>
     </div>
   </div>

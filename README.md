@@ -18,7 +18,11 @@ A high-performance, real-time multiplayer chess application built entirely on **
     - **Exponential Backoff:** Intelligent polling logic that retries failed connections with increasing delays.
     - **Hard Sync:** Automated state reconciliation that fixes desynchronization without page refreshes.
     - **Connection Monitoring:** Live status indicators (Green/Yellow/Red) with an auto-locking board during instability.
-- **♟️ Advanced Gameplay:** Supports **Premove Queueing**, **Bidirectional Takebacks** (with handshake logic), and **Right-Click Visualization** (Arrows & Circles).
+- **♟️ Advanced Gameplay:** 
+    - **Premove Queueing:** Plan moves during your opponent's turn.
+    - **Bidirectional Takebacks:** Undo moves with opponent approval.
+    - **Resign & Draw:** Explicit end-game controls with mutual handshake logic.
+    - **Right-Click Visualization:** High-speed drawing of Arrows & Circles for tactical planning.
 
 ---
 
@@ -39,12 +43,6 @@ A high-performance, real-time multiplayer chess application built entirely on **
 4. Click **Deploy > New deployment**.
 5. Select **Web app**, set "Execute as" to **Me**, and "Who has access" to **Anyone**.
 6. Copy the web app URL and start playing!
-
-### Method 2: Clasp (CLI)
-1. Install `clasp`: `npm install -g @google/clasp`.
-2. Login: `clasp login`.
-3. Clone/Create project: `clasp create --title "GAS Chess" --type webapp`.
-4. Push files: `clasp push`.
 
 ---
 

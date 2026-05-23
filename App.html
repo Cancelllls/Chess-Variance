@@ -64,6 +64,10 @@ function openWelcomeScreen() {
   showMenu('menu-main');
   roomId = null;
   setConnectionStatus('green');
+  
+  // Clear game-over overlays
+  const overlay = boardEl.querySelector('.game-over-overlay');
+  if (overlay) overlay.remove();
 }
 
 function startLocalMultiplayer() {
@@ -167,19 +171,35 @@ function startPolling() {
           return;
         }
         
-        // Reset backoff on success
         pollRetryCount = 0;
         backoffDelay = 1000;
         setConnectionStatus('green');
 
         const state = res.data;
-        const toast = document.getElementById('takeback-toast');
+        const tbToast = document.getElementById('takeback-toast');
+        const drToast = document.getElementById('draw-toast');
         const isTakebackActive = !!state.takebackRequest;
         
+        // Takeback sync
         if (state.takebackRequest && state.takebackRequest !== playerColor) {
-          toast.classList.remove('hidden');
+          tbToast.classList.remove('hidden');
         } else {
-          toast.classList.add('hidden');
+          tbToast.classList.add('hidden');
+        }
+
+        // Draw sync
+        if (state.drawOffer && state.drawOffer !== playerColor) {
+          drToast.classList.remove('hidden');
+        } else {
+          drToast.classList.add('hidden');
+        }
+
+        // Game Over sync
+        if (state.gameOver) {
+          tbToast.classList.add('hidden');
+          drToast.classList.add('hidden');
+          handleRemoteGameOver(state.gameOver);
+          return; 
         }
 
         if (state.fen !== game.fen()) {
@@ -187,11 +207,9 @@ function startPolling() {
           const serverHistory = new Chess(state.fen).history();
           const isTakebackDetected = serverHistory.length < currentHistory.length;
           
-          // HARD SYNC: If divergence is major or logic fails, force reload
           const loadSuccess = game.load(state.fen);
           if (!loadSuccess) {
-              console.error("Corrupted FEN received. Attempting Hard Sync.");
-              game.load(state.fen.split(' ')[0] + ' w KQkq - 0 1'); // Basic recovery
+              game.load(state.fen.split(' ')[0] + ' w KQkq - 0 1');
           }
           
           if (isTakebackDetected) {
@@ -220,7 +238,6 @@ function startPolling() {
             pendingPremove = null;
           }
         }
-        // Schedule next poll
         pollInterval = setTimeout(poll, 1000);
       })
       .withFailureHandler(e => {
@@ -233,20 +250,38 @@ function startPolling() {
     console.warn("Polling error:", err);
     pollRetryCount++;
     setConnectionStatus('yellow');
-    
     if (pollRetryCount >= 4) {
       setConnectionStatus('red');
       return;
     }
-    
-    backoffDelay *= 2; // Exponential backoff
+    backoffDelay *= 2;
     pollInterval = setTimeout(poll, backoffDelay);
   };
 
   pollInterval = setTimeout(poll, 1000);
 }
 
-// --- BOARD LOGIC (OPTIMIZED DOM UPDATES) ---
+function handleRemoteGameOver(gameOver) {
+  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+  document.getElementById('game-info-panel').innerText = `${gameOver.result} (${gameOver.reason})`;
+  document.getElementById('btnReview').classList.remove('hidden');
+  document.getElementById('btnUndo').classList.add('hidden');
+  document.getElementById('btnDraw').classList.add('hidden');
+  document.getElementById('btnResign').classList.add('hidden');
+  
+  const overlay = document.createElement('div');
+  overlay.className = 'game-over-overlay';
+  overlay.innerHTML = `
+    <div class="overlay-content">
+      <h2 style="margin:0">${gameOver.result}</h2>
+      <p style="margin:5px 0 0; opacity:0.8">${gameOver.reason}</p>
+    </div>
+  `;
+  boardEl.style.position = 'relative';
+  boardEl.appendChild(overlay);
+}
+
+// --- BOARD LOGIC ---
 
 function initBoard() {
   boardEl.innerHTML = '';
@@ -260,13 +295,13 @@ function initBoard() {
       square.setAttribute('aria-label', square.dataset.square);
       
       if (c === 0) {
-        const rank = document.createElement('span');
+        const rank = document.createElement('div');
         rank.className = 'coord rank';
         rank.innerText = 8 - r;
         square.appendChild(rank);
       }
       if (r === 7) {
-        const file = document.createElement('span');
+        const file = document.createElement('div');
         file.className = 'coord file';
         file.innerText = String.fromCharCode(97 + c);
         square.appendChild(file);
@@ -279,7 +314,6 @@ function initBoard() {
       boardEl.appendChild(square);
     }
   }
-  updateBoard();
 }
 
 function updateBoard() {
@@ -346,6 +380,8 @@ function updateBoard() {
   if (game.game_over()) {
     document.getElementById('btnReview').classList.remove('hidden');
     document.getElementById('btnUndo').classList.add('hidden');
+    document.getElementById('btnDraw').classList.add('hidden');
+    document.getElementById('btnResign').classList.add('hidden');
   } else {
     document.getElementById('btnReview').classList.add('hidden');
     if (gameMode !== 'analysis') {
@@ -353,6 +389,11 @@ function updateBoard() {
       undoBtn.classList.remove('hidden');
       undoBtn.disabled = (game.history().length === 0);
       undoBtn.style.opacity = (game.history().length === 0) ? '0.5' : '1';
+      
+      if (gameMode === 'online') {
+        document.getElementById('btnDraw').classList.remove('hidden');
+        document.getElementById('btnResign').classList.remove('hidden');
+      }
     }
   }
 
@@ -362,7 +403,7 @@ function updateBoard() {
   }
 }
 
-// --- SVG VISUALIZATION (ARROWS & CIRCLES) ---
+// --- SVG VISUALIZATION ---
 
 function getSquareCenter(sq) {
   const el = boardEl.querySelector(`[data-square="${sq}"]`);
@@ -380,7 +421,7 @@ function drawCircle(sq) {
   const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
   circle.setAttribute("cx", center.x);
   circle.setAttribute("cy", center.y);
-  circle.setAttribute("r", "40%"); // Proportionate to square
+  circle.setAttribute("r", "40%");
   circle.setAttribute("fill", "none");
   circle.setAttribute("stroke", "#f23c32");
   circle.setAttribute("stroke-width", "4");
@@ -391,14 +432,11 @@ function drawCircle(sq) {
 function drawArrow(from, to) {
   const start = getSquareCenter(from);
   const end = getSquareCenter(to);
-  
-  // Back off the end a bit so the arrowhead doesn't overlap center
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const angle = Math.atan2(dy, dx);
   const length = Math.sqrt(dx*dx + dy*dy);
   const backOff = 15;
-  
   const endX = start.x + Math.cos(angle) * (length - backOff);
   const endY = start.y + Math.sin(angle) * (length - backOff);
 
@@ -421,7 +459,7 @@ function clearSVG() {
 // --- INTERACTION ---
 
 function handleSquareClick(e) {
-  clearSVG(); // Left click clears visualization
+  clearSVG();
   if (gameMode === 'analysis') return;
   
   const sq = e.currentTarget.dataset.square;
@@ -451,7 +489,6 @@ function handleDragStart(e) {
   clearSVG();
   if (gameMode === 'analysis') { e.preventDefault(); return; }
   
-  // Disable dragging if connection is unstable
   if (connectionStatus !== 'green' && gameMode === 'online') {
     e.preventDefault();
     return;
@@ -469,7 +506,7 @@ function handleDragStart(e) {
       return;
     }
   } else {
-    pendingPremove = null; // Clear premove if player starts a real move
+    pendingPremove = null;
     if (p && p.color !== playerColor) {
       e.preventDefault();
       return;
@@ -501,10 +538,9 @@ function handleDrop(e) {
   clearHighlights();
 }
 
-// Right Click Logic
 document.getElementById('board-wrapper').addEventListener('contextmenu', e => e.preventDefault());
 document.getElementById('board-wrapper').addEventListener('mousedown', e => {
-  if (e.button === 2) { // Right Click
+  if (e.button === 2) {
     isRightClickDragging = true;
     let target = e.target;
     if (target.classList.contains('piece')) target = target.parentElement;
@@ -518,7 +554,6 @@ document.addEventListener('mouseup', e => {
     let target = e.target;
     if (target.classList.contains('piece')) target = target.parentElement;
     const endSq = target.dataset.square;
-    
     if (rightClickStartSq && endSq) {
       if (rightClickStartSq === endSq) drawCircle(endSq);
       else drawArrow(rightClickStartSq, endSq);
@@ -538,7 +573,11 @@ function errorCallback(error) {
 }
 
 function attemptMove(from, to, promo = null) {
-  // Hide takeback toast if making a move
+  const drToast = document.getElementById('draw-toast');
+  if (!drToast.classList.contains('hidden')) {
+    drToast.classList.add('hidden');
+    if (gameMode === 'online') google.script.run.resolveDraw(roomId, false);
+  }
   document.getElementById('takeback-toast').classList.add('hidden');
   
   if (gameMode !== 'local' && game.turn() !== playerColor) return;
@@ -553,19 +592,16 @@ function attemptMove(from, to, promo = null) {
       return;
     }
     
-    // Step 1 & 2: Local Validation and Optimistic Update
     previousFen = game.fen();
     game.move({ from, to, promotion: promo || 'q' });
     playSound('move');
     updateBoard();
     
     if (gameMode === 'online') {
-      // Step 3: Async Sync with FEN
       const currentFen = game.fen();
       const isGameOver = game.game_over();
       const moveCount = game.history().length;
       try { 
-        // Step 4: Rollback Handling
         google.script.run
           .withSuccessHandler(res => {
             if (res && !res.success) errorCallback(res.error);
@@ -584,7 +620,6 @@ function attemptMove(from, to, promo = null) {
         if (currentPuzzleStep >= puzzleSolution.length) {
           setTimeout(() => alert('Puzzle solved!'), 100);
         } else {
-          // Play the opponent's response
           setTimeout(() => {
             const oppMove = puzzleSolution[currentPuzzleStep];
             game.move(oppMove, {sloppy: true});
@@ -607,7 +642,6 @@ function attemptMove(from, to, promo = null) {
       setTimeout(() => alert('Game Over!'), 100);
     }
   } else {
-    // Snap back immediately on invalid move
     const fromEl = boardEl.querySelector(`[data-square="${from}"] .piece`);
     if (fromEl) {
       fromEl.classList.add('shake');
@@ -671,12 +705,10 @@ function updateMoveList() {
   const history = game.history({ verbose: true });
   moveListEl.innerHTML = '';
   let html = '';
-  
   for (let i = 0; i < history.length; i += 2) {
     const turnNum = Math.floor(i / 2) + 1;
     const isWActive = (analysisIndex === i);
     const isBActive = (analysisIndex === i + 1);
-    
     html += `
       <div class="move-row">
         <div class="move-num">${turnNum}.</div>
@@ -694,7 +726,6 @@ function updateMoveList() {
     `;
   }
   moveListEl.innerHTML = html;
-  
   const activeMove = moveListEl.querySelector('.active');
   if (activeMove) activeMove.scrollIntoView({ block: 'nearest' });
   else moveListEl.scrollTop = moveListEl.scrollHeight;
@@ -720,11 +751,42 @@ function jumpTo(index) {
   updateBoard();
 }
 
-function playSound(type) {
-  // Add lightweight HTML5 audio synthesis for minimal sound if desired.
-}
+function playSound(type) {}
 
 // --- BUTTON EVENTS ---
+
+let resignStep = 0;
+document.getElementById('btnResign').addEventListener('click', function() {
+  if (resignStep === 0) {
+    this.innerText = "Sure?";
+    this.style.background = "#fa412d";
+    resignStep = 1;
+    setTimeout(() => {
+      this.innerText = "🏳 Resign";
+      this.style.background = "";
+      resignStep = 0;
+    }, 3000);
+  } else {
+    google.script.run.resignGame(roomId, playerColor);
+    resignStep = 0;
+  }
+});
+
+document.getElementById('btnDraw').addEventListener('click', function() {
+  this.disabled = true;
+  this.innerText = "Draw Offered...";
+  google.script.run.offerDraw(roomId, playerColor);
+});
+
+document.getElementById('btnAcceptDraw').addEventListener('click', () => {
+  document.getElementById('draw-toast').classList.add('hidden');
+  google.script.run.resolveDraw(roomId, true);
+});
+
+document.getElementById('btnDeclineDraw').addEventListener('click', () => {
+  document.getElementById('draw-toast').classList.add('hidden');
+  google.script.run.resolveDraw(roomId, false);
+});
 
 document.getElementById('btnMenu').addEventListener('click', openWelcomeScreen);
 
@@ -757,7 +819,7 @@ document.getElementById('btnUndo').addEventListener('click', () => {
 
 document.getElementById('btnAcceptTakeback').addEventListener('click', () => {
   game.undo();
-  pendingPremove = null; // Clear local premove on accept
+  pendingPremove = null;
   clearHighlights();
   updateBoard();
   const revertedFen = game.fen();
@@ -779,6 +841,7 @@ document.getElementById('btnDeclineTakeback').addEventListener('click', () => {
     .withFailureHandler(e => console.error("Takeback resolution failed:", e))
     .resolveTakeback(roomId, false, null);
 });
+
 document.getElementById('btnFlip').addEventListener('click', () => { 
   boardFlipped = !boardFlipped; 
   updateBoard(); 
@@ -861,15 +924,13 @@ let evalDebounceTimeout = null;
 
 function triggerEvaluation(depth = 10) {
   if (gameMode === 'online') return;
-  
   if (evalDebounceTimeout) clearTimeout(evalDebounceTimeout);
-  
   evalDebounceTimeout = setTimeout(() => {
     enginePool.onEvalResult = (cp, mate, taskId) => {
       if (taskId === 'live') updateEvalBar(cp, mate);
     };
     enginePool.evaluate(game.fen(), depth, 'live');
-  }, 250); // 250ms Debounce to prevent UI lag during active piece dragging
+  }, 250);
 }
 
 function updateEvalBar(cp, mate) {
@@ -879,7 +940,6 @@ function updateEvalBar(cp, mate) {
 
   let absoluteCp = cp;
   if (game.turn() === 'b') absoluteCp = -cp;
-
   let absoluteMate = mate;
   if (mate !== null && game.turn() === 'b') absoluteMate = -mate;
 
@@ -901,25 +961,22 @@ function updateEvalBar(cp, mate) {
     fillEl.style.height = percentage + '%';
     textEl.className = percentage > 50 ? 'eval-bar-text bottom' : 'eval-bar-text top';
   }
-
   textEl.innerText = text;
 }
+
 // --- POST-GAME ANALYSIS MODE ---
 
 let analysisHistory = [];
 let analysisIndex = -1;
-let fullGameAnalysis = []; // Stores { fen, move, eval, cpl, classification }
+let fullGameAnalysis = [];
 
 async function startAnalysisMode() {
   gameMode = 'analysis';
   analysisHistory = game.history({ verbose: true });
   analysisIndex = analysisHistory.length - 1;
-  
   document.getElementById('main-controls').classList.add('hidden');
   document.getElementById('analysis-controls').classList.remove('hidden');
   document.getElementById('game-info-panel').innerText = "Analyzing Game...";
-  
-  // Show report section (initially empty/loading)
   document.getElementById('analysis-report').classList.remove('hidden');
   resetReportUI();
 
@@ -931,7 +988,7 @@ async function startAnalysisMode() {
   document.getElementById('thread-count').innerText = enginePool.poolSize;
 
   updateBoard();
-  triggerEvaluation(16); // High depth for current position
+  triggerEvaluation(16);
 }
 
 function resetReportUI() {
@@ -946,22 +1003,17 @@ async function runFullGameAnalysis() {
   fullGameAnalysis = [];
   const history = game.history({ verbose: true });
   const tempGame = new Chess();
-  
   const fensToEval = [tempGame.fen()];
   for (let move of history) {
     tempGame.move(move);
     fensToEval.push(tempGame.fen());
   }
 
-  // Multi-threaded Parallel Evaluation
   const evalPromises = fensToEval.map((fen, index) => {
     return new Promise(resolve => {
       const checkResult = (cp, mate, taskId) => {
-        if (taskId === `batch_${index}`) {
-          resolve({ cp, mate });
-        }
+        if (taskId === `batch_${index}`) resolve({ cp, mate });
       };
-      // Use temporary listener for the pool result
       const originalListener = enginePool.onEvalResult;
       enginePool.onEvalResult = (cp, mate, taskId) => {
         if (originalListener) originalListener(cp, mate, taskId);
@@ -972,31 +1024,19 @@ async function runFullGameAnalysis() {
   });
 
   const evals = await Promise.all(evalPromises);
-
-  // Calculate CPL and Classify
   let whiteCPLs = [];
   let blackCPLs = [];
-  let tallies = { best: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0 };
+  let tallies = { brilliant: 0, great: 0, best: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0 };
 
   for (let i = 0; i < history.length; i++) {
     const prevEval = evals[i];
     const currEval = evals[i+1];
     const turn = i % 2 === 0 ? 'w' : 'b';
-
     let cpl = calculateCPL(prevEval, currEval, turn);
     let classification = classifyMove(cpl);
-    
-    if (turn === 'w') whiteCPLs.push(cpl);
-    else blackCPLs.push(cpl);
-    
+    if (turn === 'w') whiteCPLs.push(cpl); else blackCPLs.push(cpl);
     tallies[classification.toLowerCase()]++;
-    
-    fullGameAnalysis.push({
-      move: history[i],
-      eval: currEval,
-      cpl: cpl,
-      classification: classification
-    });
+    fullGameAnalysis.push({ move: history[i], eval: currEval, cpl: cpl, classification: classification });
   }
 
   displayAnalysisReport(whiteCPLs, blackCPLs, tallies);
@@ -1004,15 +1044,8 @@ async function runFullGameAnalysis() {
 }
 
 function calculateCPL(prev, curr, turn) {
-  let p = prev.cp;
-  if (prev.mate !== null) p = prev.mate > 0 ? 10000 : -10000;
-  
-  let c = curr.cp;
-  if (curr.mate !== null) c = curr.mate > 0 ? 10000 : -10000;
-
-  // CPL = Eval before move - Eval after move (from perspective of player who moved)
-  // If turn is White, positive eval is good. CPL = p - c
-  // If turn is Black, negative eval is good. CPL = (-p) - (-c) = c - p
+  let p = prev.cp; if (prev.mate !== null) p = prev.mate > 0 ? 10000 : -10000;
+  let c = curr.cp; if (curr.mate !== null) c = curr.mate > 0 ? 10000 : -10000;
   let cpl = turn === 'w' ? (p - c) : (c - p);
   return Math.max(0, cpl);
 }
@@ -1030,27 +1063,41 @@ function classifyMove(cpl) {
 function displayAnalysisReport(wLabels, bLabels, tallies) {
   const acplW = wLabels.reduce((a,b) => a+b, 0) / (wLabels.length || 1);
   const acplB = bLabels.reduce((a,b) => a+b, 0) / (bLabels.length || 1);
-
   const eloW = estimateElo(acplW);
   const eloB = estimateElo(acplB);
+  const accW = Math.round(Math.max(0, 100 - acplW/2));
+  const accB = Math.round(Math.max(0, 100 - acplB/2));
 
   document.getElementById('white-elo').innerText = eloW;
   document.getElementById('black-elo').innerText = eloB;
-  document.getElementById('white-acc').innerText = Math.round(Math.max(0, 100 - acplW/2)) + "%";
-  document.getElementById('black-acc').innerText = Math.round(Math.max(0, 100 - acplB/2)) + "%";
+  document.getElementById('white-acc').innerText = accW + "%";
+  document.getElementById('black-acc').innerText = accB + "%";
+  
+  const setRing = (id, val) => {
+    const offset = 226 - (226 * val) / 100;
+    document.getElementById(id).style.strokeDashoffset = offset;
+  };
+  setRing('white-acc-ring', accW);
+  setRing('black-acc-ring', accB);
 
   const tallyContainer = document.getElementById('move-tally');
-  tallyContainer.innerHTML = `
-    <div class="tally-item" style="border-left: 3px solid #00f3ff"><span>Best</span> <b>${tallies.best}</b></div>
-    <div class="tally-item" style="border-left: 3px solid #00ff41"><span>Good</span> <b>${tallies.good}</b></div>
-    <div class="tally-item" style="border-left: 3px solid #ffff00"><span>Inacc</span> <b>${tallies.inaccuracy}</b></div>
-    <div class="tally-item" style="border-left: 3px solid #ffaa00"><span>Mistake</span> <b>${tallies.mistake}</b></div>
-    <div class="tally-item" style="border-left: 3px solid #ff0000"><span>Blunder</span> <b>${tallies.blunder}</b></div>
-  `;
+  const items = [
+    { label: 'Brilliant', key: 'brilliant', color: 'var(--color-brilliant)' },
+    { label: 'Great', key: 'great', color: 'var(--color-great)' },
+    { label: 'Best', key: 'best', color: 'var(--color-best)' },
+    { label: 'Inacc', key: 'inaccuracy', color: 'var(--color-inaccuracy)' },
+    { label: 'Mistake', key: 'mistake', color: 'var(--color-mistake)' },
+    { label: 'Blunder', key: 'blunder', color: 'var(--color-blunder)' }
+  ];
+  tallyContainer.innerHTML = items.map(i => `
+    <div class="tally-item" style="border-left: 3px solid ${i.color}">
+      <span>${i.label}</span>
+      <b>${tallies[i.key] || 0}</b>
+    </div>
+  `).join('');
 }
 
 function estimateElo(acpl) {
-  // Heuristic: Elo = 3000 - (acpl * 25)
   let elo = 2900 - (acpl * 22);
   return Math.max(400, Math.min(3000, Math.round(elo)));
 }
@@ -1065,33 +1112,21 @@ function exitAnalysisMode() {
 function goToAnalysisStep(index) {
   if (index < -1 || index >= analysisHistory.length) return;
   analysisIndex = index;
-  
   game.reset();
-  for (let i = 0; i <= index; i++) {
-    game.move(analysisHistory[i]);
-  }
-  
+  for (let i = 0; i <= index; i++) game.move(analysisHistory[i]);
   updateBoard();
-  
-  // Highlight the move classification if available
   if (index >= 0 && fullGameAnalysis[index]) {
     const move = fullGameAnalysis[index].move;
     const classification = fullGameAnalysis[index].classification.toLowerCase();
-    
-    const fromSq = boardEl.querySelector(`[data-square="${move.from}"]`);
     const toSq = boardEl.querySelector(`[data-square="${move.to}"]`);
-    
-    if (fromSq && toSq) {
-      fromSq.classList.add('anno-' + classification);
-      toSq.classList.add('anno-' + classification);
-      
-      const tag = document.createElement('div');
-      tag.className = `move-classification-tag tag-${classification}`;
-      tag.innerText = classification;
-      toSq.appendChild(tag);
+    if (toSq) {
+      const icons = { brilliant: '!!', great: '!', best: '★', inaccuracy: '?!', mistake: '?', blunder: '??' };
+      const badge = document.createElement('div');
+      badge.className = `badge badge-${classification} square-badge`;
+      badge.innerText = icons[classification] || '';
+      toSq.appendChild(badge);
     }
   }
-
   triggerEvaluation(16);
 }
 
