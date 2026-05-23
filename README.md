@@ -1,57 +1,54 @@
-# ♟️ Google Apps Script Chess
+# ♟️ Google Apps Script Chess (Pro UI Edition)
 
-A beautifully designed, feature-rich Chess application built entirely within **Google Apps Script** (GAS). This project uses modern web technologies on the frontend (HTML/CSS/JS) and a high-performance CacheService architecture on the backend to deliver seamless online multiplayer, AI matchups, and deep post-game analysis.
+A professional-grade Chess application built entirely within **Google Apps Script** (GAS), meticulously designed to mimic the premium user experience of Chess.com. This project combines a high-performance WASM-powered engine architecture with a sleek, responsive frontend.
 
 ---
 
 ## ✨ Features
 
-- **🌐 Lightning-Fast Online Multiplayer:** Play in real-time with friends. The backend uses Google Apps Script `CacheService` to deliver sub-50ms reads/writes, effectively hiding server latency with advanced optimistic UI updates on the frontend.
-- **🔍 Advanced Post-Game Analysis:** 
-    - **Move Classification:** Automatically categorizes every move as *Best*, *Excellent*, *Good*, *Inaccuracy*, *Mistake*, or *Blunder*.
-    - **Elo Estimation:** Provides a performance-based Elo estimate for both players using an Average Centipawn Loss (ACPL) heuristic.
-    - **Cyberpunk Annotations:** Visual board feedback with neon overlays—Best moves glow cyan, while Blunders trigger a red "glitch-shake" animation.
-- **📈 Live Evaluation Bar:** A Chess.com-style vertical bar powered by a sigmoid-based mathematical model, providing real-time engine evaluation (centipawns and mate threats).
-- **🧩 Offline Puzzle Generator:** Never run out of puzzles! We've bundled a lightweight Web Worker version of `Stockfish.js` directly into the app. It dynamically simulates games and extracts deep tactical sequences on your local CPU.
-- **🤖 Play vs Computer (Minimax AI):** Challenge an offline Minimax AI with customizable search depths and Alpha-Beta pruning.
-- **🌙 Dynamic Dark Mode:** A beautifully designed dark theme tailored for chess, isolated from global image filters to keep pieces looking crisp and high-contrast.
-- **💾 Save/Load & PGN Export:** Save your game states locally or export your matches directly to standard PGN files.
+- **🌐 Lightning-Fast Online Multiplayer:** Real-time play powered by Google Apps Script `CacheService` for sub-50ms synchronization, paired with optimistic UI updates for zero-lag piece movement.
+- **🎨 Chess.com Design System:** 
+    - **Dark Mode Aesthetic:** Built with the official Chess.com color palette (`#312e2b` / `#262421`).
+    - **Tactile UI:** 3D-effect action buttons and a clean, responsive split-pane layout.
+    - **Classic Board:** Green and cream palette (`#739552` / `#ebecd0`) for optimal focus.
+- **🔍 Professional Game Review:**
+    - **Move Classification:** Industry-standard badges for *Brilliant (!!)*, *Great (!)*, *Best (★)*, *Inaccuracy*, *Mistake*, and *Blunder*.
+    - **Accuracy Rings:** Visual SVG circular progress indicators for performance benchmarking.
+    - **Elo Estimation:** ACPL-based heuristic model to estimate performance rating.
+- **📈 Advanced Evaluation Bar:** Live engine feedback with a professional sigmoid-based advantage visualization.
+- **⚡ High-Performance Engine Pool:**
+    - **Multi-threaded Analysis:** Detects CPU cores and parallelizes full-game reviews using a pool of WASM Stockfish workers.
+    - **WASM Powered:** Leverages WebAssembly for near-native calculation speeds.
+- **🧩 Offline Puzzle Generator:** Dynamic tactical sequence extraction running fully on the local CPU.
+- **🌙 Dynamic Styling:** Perfectly isolated piece assets that remain crisp and high-contrast in all theme modes.
 
 ---
 
 ## 🏗️ Architecture
 
-This app avoids complex external dependencies by cleverly bundling logic into Apps Script HTML templates:
-- **`Code.gs`**: The backend server. Handles dynamic room creation and manages the state via `CacheService` with a persistent background fallback to Google Sheets.
-- **`EngineWorker` (Web Worker)**: A sophisticated background processor that manages Stockfish.js. It handles:
-    - **Live Eval:** Asynchronous depth-10 evaluation for the UI bar.
-    - **Batch Analysis:** Iterative full-game processing for post-game reports.
-    - **Puzzle Generation:** Continuous tactical sequence extraction.
-- **Frontend Logic**: Implements optimistic UI predictions—instantly snapping pieces and predicting board states while network synchronization happens asynchronously.
+- **`Code.gs`**: The GAS backend. Manages rooms and game states via `CacheService` with a persistent Sheets fallback.
+- **`EnginePool` (Multi-threaded)**: A sophisticated background manager that distributes evaluation tasks across multiple Web Workers using `navigator.hardwareConcurrency`.
+- **Frontend Logic**: Implements Chess.com-style move list rendering, debounced evaluations, and smooth SVG-based visual feedback.
 
 ---
 
 ## 🚀 Deployment Instructions
 
-To deploy this project to your own Google Apps Script environment:
-
 1. Create a new project at [script.google.com](https://script.google.com/).
 2. Copy the contents of `Code.gs` into the script editor.
-3. Create new HTML files in the script editor matching the names in this repository:
+3. Create new HTML files matching the names in this repository:
     - `Index.html`, `App.html`, `Stylesheet.html`, `Pieces.html`, `Engine.html`, `AI.html`, `Stockfish.html`, `PuzzleGen.html`.
 4. Click **Deploy > New deployment**.
 5. Select type **Web app**, execute as **Me**, and set access to **Anyone**.
-6. Deploy and enjoy your personal chess server!
+6. Deploy and enjoy your personal professional-grade chess server!
 
 ---
 
-## 🎨 Design
+## 🎨 Design Notes
 
-The visual design embraces modern UI standards:
-- **Bento-Box Reporting:** A sleek, brutalist grid for post-game statistics and Elo estimation.
-- **Optimized Palette:** Sleek slate/green squares (Dark Mode explicitly uses `#769656` and `#eeeed2`).
-- **Responsive Layout:** A pure CSS-Grid approach that scales smoothly on mobile and desktop.
-- **Rich Interactions:** Drag-and-drop mechanics, animated piece shaking, and cyberpunk glitch effects for blunders.
+- **Optimized Palette:** Uses standard professional hex codes for board squares and piece highlighting.
+- **Responsive Layout:** Flexbox/Grid architecture that adapts from wide desktop monitors to mobile touchscreens.
+- **Performance Monitor:** Integrated real-time readout of thread usage and execution times during analysis.
 
 ---
 
