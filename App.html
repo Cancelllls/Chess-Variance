@@ -149,33 +149,40 @@ function startPolling() {
           
           // --- TAKEBACK HANDSHAKE ---
           const toast = document.getElementById('takeback-toast');
+          const isTakebackActive = !!state.takebackRequest;
+          
           if (state.takebackRequest && state.takebackRequest !== playerColor) {
             toast.classList.remove('hidden');
           } else {
             toast.classList.add('hidden');
           }
 
-          if (state.fen !== game.fen() && state.fen !== game.pgn()) {
-            const isTakeback = (game.history().length > 0 && game.fen() !== state.fen); // Basic check
+          if (state.fen !== game.fen()) {
+            const currentHistory = game.history();
+            const serverHistory = new Chess(state.fen).history();
+            const isTakebackDetected = serverHistory.length < currentHistory.length;
             
             if (state.fen.indexOf('[') !== -1 || state.fen.indexOf('1.') === 0) {
               game.load_pgn(state.fen);
             } else {
               game.load(state.fen);
             }
-            updateBoard();
-            playSound('move');
             
-            if (isTakeback) {
+            if (isTakebackDetected) {
+              pendingPremove = null; // Aggressively clear premove on takeback sync
+              clearHighlights();
               const undoBtn = document.getElementById('btnUndo');
               if (undoBtn.innerText === "Takeback Proposed...") {
                 undoBtn.innerText = "Undo";
                 undoBtn.disabled = false;
               }
             }
+            
+            updateBoard();
+            playSound('move');
 
-            // --- PREMOVE EXECUTION ---
-            if (pendingPremove && game.turn() === playerColor) {
+            // --- PREMOVE EXECUTION (Suspended if takeback active) ---
+            if (pendingPremove && game.turn() === playerColor && !isTakebackActive) {
               const move = game.move({ from: pendingPremove.from, to: pendingPremove.to, promotion: 'q' });
               if (move) {
                 const currentFen = game.fen();
@@ -691,6 +698,8 @@ document.getElementById('btnUndo').addEventListener('click', () => {
 
 document.getElementById('btnAcceptTakeback').addEventListener('click', () => {
   game.undo();
+  pendingPremove = null; // Clear local premove on accept
+  clearHighlights();
   updateBoard();
   const revertedFen = game.fen();
   document.getElementById('takeback-toast').classList.add('hidden');

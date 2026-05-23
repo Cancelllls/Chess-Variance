@@ -136,9 +136,13 @@ function requestTakeback(gameId, playerColor) {
 function resolveTakeback(gameId, isAccepted, fallbackFen) {
   var lock = LockService.getScriptLock();
   try {
-    lock.waitLock(5000);
-    var state = getGameState(gameId);
-    if (!state) return false;
+    lock.waitLock(10000);
+    var cachedData = CacheService.getScriptCache().get('chess_state_' + gameId);
+    if (!cachedData) return false;
+    
+    var state = JSON.parse(cachedData);
+    if (!state.takebackRequest) return false; // Already resolved or overridden by a move
+    
     state.takebackRequest = null;
     if (isAccepted && fallbackFen) {
       state.fen = fallbackFen;
