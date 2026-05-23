@@ -95,6 +95,7 @@ body {
   grid-template-rows: repeat(8, var(--square-size));
   user-select: none;
   box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+  touch-action: manipulation; /* Prevents double-tap to zoom on mobile */
 }
 
 .square {
@@ -117,8 +118,52 @@ body {
   background-position: center;
   cursor: grab;
   z-index: 10;
+  transition: transform 0.15s ease-out !important; /* Smooth Piece Animations */
+  will-change: transform;
 }
-.piece:active { cursor: grabbing; }
+.piece:active { cursor: grabbing; transition: none !important; }
+
+/* --- CYBERPUNK SECRET THEME --- */
+body[data-theme="cyberpunk"] {
+    --bg-main: #0a0a0a;
+    --bg-panel: #000;
+    --accent-green: #00f3ff;
+    --accent-green-hover: #ff00ff;
+    --accent-green-shadow: #bc00bc;
+    --square-dark: #111;
+    --square-light: #222;
+    --border-radius: 0px;
+}
+body[data-theme="cyberpunk"] .sidebar,
+body[data-theme="cyberpunk"] .welcome-box,
+body[data-theme="cyberpunk"] .btn-primary,
+body[data-theme="cyberpunk"] .clock,
+body[data-theme="cyberpunk"] .tally-item,
+body[data-theme="cyberpunk"] .bento-item {
+    border-radius: 0px !important;
+    border: 1px solid #00f3ff;
+    box-shadow: 2px 2px 0px #ff00ff;
+}
+body[data-theme="cyberpunk"] #board {
+    border: 2px solid #00f3ff;
+    gap: 1px;
+    background: #00f3ff;
+}
+body[data-theme="cyberpunk"] .eval-bar-fill { background-color: #00f3ff; }
+body[data-theme="cyberpunk"] .eval-bar-text { 
+    color: #fff; 
+    text-shadow: 0 0 5px #00f3ff;
+    animation: glitch 1s infinite linear alternate-reverse;
+}
+
+@keyframes glitch {
+  0% { transform: translateY(-50%) translate(0); }
+  20% { transform: translateY(-50%) translate(-2px, 1px); }
+  40% { transform: translateY(-50%) translate(-2px, -1px); }
+  60% { transform: translateY(-50%) translate(2px, 1px); }
+  80% { transform: translateY(-50%) translate(2px, -1px); }
+  100% { transform: translateY(-50%) translate(0); }
+}
 
 .coord {
   position: absolute;

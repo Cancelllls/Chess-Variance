@@ -11,7 +11,9 @@ A professional-grade, high-performance, real-time multiplayer chess application 
 - **⏱️ Server-Authoritative Time Controls:** Professional digital clocks for White and Black with server-side time calculation and automatic flagging (timeouts).
 - **🏆 Persistent Office Leaderboard:** A persistent ELO rating system stored in Google Sheets. Compete with colleagues and track wins, losses, and draws.
 - **👁️ Spectator Mode:** Join any active room as a spectator to watch games live. Supports an unlimited number of viewers per room.
-- **🔊 100% Offline Audio Feedback:** Instant audio cues for moves, captures, checks, and game ends, synthesized locally via the Web Audio API for a self-contained experience.
+- **🔊 High-Fidelity Feedback:** 
+    - **Audio:** Move, capture, check, and game-over sounds synthesized locally via the Web Audio API.
+    - **Haptics:** Hardware vibration feedback on mobile devices for tactile gameplay (vibrates on moves and captures).
 - **⚡ High-Performance Engine Pool:** A multi-threaded background analysis system using a pool of **WASM Stockfish** workers. Detects your CPU core count to parallelize full-game reviews.
 - **🔍 Professional Review Suite:** 
     - **Move Classification:** Industry-standard badges for *Brilliant (!!)*, *Great (!)*, *Best (★)*, and *Blunders*.
@@ -22,7 +24,12 @@ A professional-grade, high-performance, real-time multiplayer chess application 
     - **Exponential Backoff:** Intelligent polling logic that retries failed connections with increasing delays.
     - **Hard Sync:** Automated state reconciliation that fixes desynchronization without page refreshes.
     - **Connection Monitoring:** Live status indicators (Green/Yellow/Red) with an auto-locking board during instability.
-- **♟️ Advanced Gameplay:** Supports **Premove Queueing**, **Bidirectional Takebacks**, and **Right-Click Visualization** (Arrows & Circles).
+- **♟️ Advanced Gameplay:** 
+    - **Premove Queueing:** Plan moves during your opponent's turn.
+    - **Bidirectional Takebacks:** Undo moves with opponent approval.
+    - **Resign & Draw:** Explicit end-game controls with mutual handshake logic.
+    - **Right-Click Visualization:** High-speed drawing of Arrows & Circles for tactical planning.
+    - **Smooth Animations:** Hardware-accelerated CSS transitions for fluid piece movement.
 
 ---
 
@@ -30,8 +37,8 @@ A professional-grade, high-performance, real-time multiplayer chess application 
 
 - **Backend (`Code.gs`)**: Uses `CacheService` as a high-speed database and `LockService` for atomicity. Standardized JSON error handling ensures stability.
 - **Persistent Data**: Google Sheets stores the "Players" leaderboard (Elo, W/L/D) and "ChessGames" history.
-- **Frontend (`App.html`)**: Implements **Optimistic UI updates** and local countdown timers synced with the server.
-- **Engine (`Stockfish WASM`)**: Runs in the background to provide deep analysis and real-time evaluation without blocking the UI.
+- **Frontend (`App.html`)**: Implements **Optimistic UI updates**, local countdown timers, and hardware-accelerated piece animations.
+- **Engine (`Stockfish WASM`)**: Runs in a multi-threaded worker pool to provide deep analysis and real-time evaluation without blocking the UI.
 
 ---
 
@@ -55,4 +62,4 @@ A professional-grade, high-performance, real-time multiplayer chess application 
 
 ---
 
-*Note: This application requires an active internet connection for multiplayer synchronization. Offline Puzzles and AI modes run locally on your device's CPU via Web Workers.*
+*Note: This application requires an active internet connection for multiplayer synchronization. Offline Puzzles and AI modes run locally on your device's CPU via Web Workers. Hardware haptics require a supported mobile device.*

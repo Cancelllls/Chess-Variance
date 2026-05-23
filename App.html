@@ -6,11 +6,19 @@ let showCoords = true;
 let showHints = false;
 
 // Multiplayer & Mode State
-let gameMode = 'local'; // 'local', 'ai', 'online'
+let gameMode = 'local'; // 'local', 'ai', 'online', 'puzzle', 'analysis'
 let playerColor = 'w';
+let playerRole = 'player'; // 'player' or 'spectator'
+let playerName = "Guest";
 let roomId = null;
 let pollInterval = null;
+let clockInterval = null;
 let aiDepth = 2;
+
+// Clock State
+let whiteTime = 300000;
+let blackTime = 300000;
+let lastServerSync = Date.now();
 
 // DOM Elements
 const boardEl = document.getElementById('board');
@@ -30,20 +38,92 @@ let currentRightClickSq = null;
 // Resilience State
 let pollRetryCount = 0;
 let backoffDelay = 1000;
-let connectionStatus = 'green'; // 'green', 'yellow', 'red'
+let connectionStatus = 'green'; 
+
+// --- AUDIO & HAPTICS CONTROLLER ---
+const AudioController = {
+  muted: false,
+  play(type) {
+    if (this.muted) return;
+    
+    // Hardware Haptics (Vibration API)
+    if (navigator.vibrate) {
+      if (type === 'move') navigator.vibrate(15);
+      else if (type === 'capture') navigator.vibrate([30, 50, 30]);
+      else if (type === 'check' || type === 'gameEnd') navigator.vibrate([100, 50, 100, 50, 200]);
+    }
+
+    // Web Audio Synthesis (Offline Bleeps)
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      if (type === 'move') { osc.frequency.setValueAtTime(600, ctx.currentTime); gain.gain.setTargetAtTime(0.1, ctx.currentTime, 0.01); }
+      else if (type === 'capture') { osc.frequency.setValueAtTime(400, ctx.currentTime); gain.gain.setTargetAtTime(0.2, ctx.currentTime, 0.01); }
+      else if (type === 'check') { osc.frequency.setValueAtTime(800, ctx.currentTime); gain.gain.setTargetAtTime(0.2, ctx.currentTime, 0.01); }
+      else if (type === 'gameEnd') { osc.frequency.setValueAtTime(300, ctx.currentTime); gain.gain.setTargetAtTime(0.3, ctx.currentTime, 0.01); }
+      
+      osc.start();
+      gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + 0.1);
+      osc.stop(ctx.currentTime + 0.1);
+    } catch(e) {}
+  }
+};
+
+document.getElementById('mute-toggle').addEventListener('click', function() {
+  AudioController.muted = !AudioController.muted;
+  this.innerText = AudioController.muted ? '🔇' : '🔊';
+});
 
 function setConnectionStatus(status) {
   connectionStatus = status;
   const dot = document.getElementById('connection-status');
-  dot.className = 'conn-dot ' + status;
+  if (dot) dot.className = 'conn-dot ' + status;
+  if (status === 'red') document.getElementById('disconnect-modal').classList.remove('hidden');
+}
+
+// --- CLOCK LOGIC ---
+function updateClocks() {
+  const now = Date.now();
+  if (gameMode === 'online' && !game.game_over()) {
+    const elapsed = now - lastServerSync;
+    if (game.turn() === 'w') whiteTime = Math.max(0, whiteTime - elapsed);
+    else blackTime = Math.max(0, blackTime - elapsed);
+    lastServerSync = now;
+    
+    // Auto-flag check locally
+    if (whiteTime <= 0 || blackTime <= 0) {
+      // Backend will catch this on next poll or move, but we stop locally
+      if (clockInterval) clearInterval(clockInterval);
+    }
+  }
   
-  if (status === 'red') {
-    document.getElementById('disconnect-modal').classList.remove('hidden');
+  const formatTime = (ms) => {
+    const totalSec = Math.floor(ms / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    return `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  const wEl = document.getElementById('clock-white');
+  const bEl = document.getElementById('clock-black');
+  if(wEl) wEl.innerText = formatTime(whiteTime);
+  if(bEl) bEl.innerText = formatTime(blackTime);
+  
+  if(wEl) {
+    wEl.classList.toggle('active', game.turn() === 'w');
+    wEl.classList.toggle('low-time', whiteTime < 30000);
+  }
+  if(bEl) {
+    bEl.classList.toggle('active', game.turn() === 'b');
+    bEl.classList.toggle('low-time', blackTime < 30000);
   }
 }
 
 // --- WELCOME SCREEN LOGIC ---
-
 function showMenu(id) {
   document.querySelectorAll('.menu-section').forEach(el => el.classList.add('hidden'));
   const target = document.getElementById(id);
@@ -51,21 +131,25 @@ function showMenu(id) {
 }
 
 function closeWelcomeScreen() {
+  playerName = document.getElementById('player-name-input').value || "Guest";
   document.getElementById('welcome-screen').classList.add('hidden');
   document.getElementById('main-app').style.filter = 'none';
   document.getElementById('main-app').style.pointerEvents = 'auto';
+  if (clockInterval) clearInterval(clockInterval);
+  clockInterval = setInterval(updateClocks, 1000);
 }
 
 function openWelcomeScreen() {
   if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+  if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
   document.getElementById('welcome-screen').classList.remove('hidden');
   document.getElementById('main-app').style.filter = 'blur(5px)';
   document.getElementById('main-app').style.pointerEvents = 'none';
   showMenu('menu-main');
   roomId = null;
+  playerRole = 'player';
+  document.getElementById('spectator-badge').classList.add('hidden');
   setConnectionStatus('green');
-  
-  // Clear game-over overlays
   const overlay = boardEl.querySelector('.game-over-overlay');
   if (overlay) overlay.remove();
 }
@@ -74,6 +158,7 @@ function startLocalMultiplayer() {
   gameMode = 'local';
   game.reset();
   boardFlipped = false;
+  whiteTime = blackTime = 300000;
   updateBoard();
   document.getElementById('game-info-panel').innerText = "Local Pass & Play";
   closeWelcomeScreen();
@@ -85,6 +170,7 @@ function startAIGame(color) {
   aiDepth = parseInt(document.getElementById('ai-diff-slider').value);
   game.reset();
   boardFlipped = (color === 'b');
+  whiteTime = blackTime = 300000;
   updateBoard();
   document.getElementById('game-info-panel').innerText = "Playing vs Computer";
   closeWelcomeScreen();
@@ -92,6 +178,7 @@ function startAIGame(color) {
 }
 
 function createOnlineRoom() {
+  const pName = document.getElementById('player-name-input').value || "Guest";
   document.getElementById('online-status').innerText = "Creating room...";
   const undoBtn = document.getElementById('btnUndo');
   undoBtn.innerText = "Undo";
@@ -102,8 +189,10 @@ function createOnlineRoom() {
         roomId = id;
         gameMode = 'online';
         playerColor = 'w';
+        playerRole = 'player';
         boardFlipped = false;
         game.reset();
+        whiteTime = blackTime = 300000;
         updateBoard();
         document.getElementById('game-info-panel').innerText = "Room Code: " + roomId;
         closeWelcomeScreen();
@@ -112,15 +201,16 @@ function createOnlineRoom() {
       .withFailureHandler(e => {
         document.getElementById('online-status').innerText = "Server Error: Failed to create room.";
       })
-      .createRoom();
+      .createRoom(pName);
   } catch(e) {
-    document.getElementById('online-status').innerText = "Error: Network / Apps Script not detected.";
+    document.getElementById('online-status').innerText = "Error: Network error detected.";
   }
 }
 
 function joinOnlineRoom() {
   const id = document.getElementById('room-code-input').value.toUpperCase();
   if(id.length !== 4) return;
+  const pName = document.getElementById('player-name-input').value || "Guest";
   document.getElementById('online-status').innerText = "Joining...";
   const undoBtn = document.getElementById('btnUndo');
   undoBtn.innerText = "Undo";
@@ -134,13 +224,23 @@ function joinOnlineRoom() {
         }
         roomId = id;
         gameMode = 'online';
-        playerColor = 'b';
-        boardFlipped = true;
         const state = res.data;
+        playerColor = res.role === 'spectator' ? 'w' : res.role;
+        playerRole = res.role;
+        boardFlipped = (playerColor === 'b');
+        
+        if (playerRole === 'spectator') {
+          document.getElementById('spectator-badge').classList.remove('hidden');
+        }
+
         if (state && state.fen) {
           game.load(state.fen);
+          whiteTime = state.whiteTime;
+          blackTime = state.blackTime;
+          lastServerSync = state.lastMoveTimestamp;
         } else {
           game.reset();
+          whiteTime = blackTime = 300000;
         }
         updateBoard();
         document.getElementById('game-info-panel').innerText = "Room Code: " + roomId;
@@ -150,9 +250,9 @@ function joinOnlineRoom() {
       .withFailureHandler(e => {
         document.getElementById('online-status').innerText = "Server Error: Failed to join room.";
       })
-      .getGameState(id);
+      .getGameState(id, pName);
   } catch(e) {
-    document.getElementById('online-status').innerText = "Error: Network / Apps Script not detected.";
+    document.getElementById('online-status').innerText = "Error: Network error detected.";
   }
 }
 
@@ -176,25 +276,26 @@ function startPolling() {
         setConnectionStatus('green');
 
         const state = res.data;
+        whiteTime = state.whiteTime;
+        blackTime = state.blackTime;
+        lastServerSync = state.lastMoveTimestamp;
+
         const tbToast = document.getElementById('takeback-toast');
         const drToast = document.getElementById('draw-toast');
         const isTakebackActive = !!state.takebackRequest;
         
-        // Takeback sync
-        if (state.takebackRequest && state.takebackRequest !== playerColor) {
+        if (state.takebackRequest && state.takebackRequest !== playerColor && playerRole !== 'spectator') {
           tbToast.classList.remove('hidden');
         } else {
           tbToast.classList.add('hidden');
         }
 
-        // Draw sync
-        if (state.drawOffer && state.drawOffer !== playerColor) {
+        if (state.drawOffer && state.drawOffer !== playerColor && playerRole !== 'spectator') {
           drToast.classList.remove('hidden');
         } else {
           drToast.classList.add('hidden');
         }
 
-        // Game Over sync
         if (state.gameOver) {
           tbToast.classList.add('hidden');
           drToast.classList.add('hidden');
@@ -216,24 +317,32 @@ function startPolling() {
             pendingPremove = null;
             clearHighlights();
             const undoBtn = document.getElementById('btnUndo');
-            if (undoBtn.innerText === "Takeback Proposed...") {
+            if (undoBtn.innerText === "Proposing...") {
               undoBtn.innerText = "Undo";
               undoBtn.disabled = false;
             }
           }
           
           updateBoard();
-          playSound('move');
+          const lastMove = game.history({verbose:true}).pop();
+          if (lastMove) {
+            const isCapture = lastMove.flags.includes('c') || lastMove.flags.includes('e');
+            if (game.in_check()) AudioController.play('check');
+            else if (isCapture) AudioController.play('capture');
+            else AudioController.play('move');
+          }
 
-          if (pendingPremove && game.turn() === playerColor && !isTakebackActive) {
-            const move = game.move({ from: pendingPremove.from, to: pendingPremove.to, promotion: 'q' });
-            if (move) {
-              const currentFen = game.fen();
+          if (pendingPremove && game.turn() === playerColor && !isTakebackActive && playerRole !== 'spectator') {
+            const pm = game.move({ from: pendingPremove.from, to: pendingPremove.to, promotion: 'q' });
+            if (pm) {
               google.script.run
                 .withFailureHandler(errorCallback)
-                .makeMove(roomId, currentFen, game.game_over(), game.history().length);
+                .makeMove(roomId, game.fen(), game.game_over(), game.history().length, playerColor);
               updateBoard();
-              playSound('move');
+              const isPMCapture = pm.flags.includes('c') || pm.flags.includes('e');
+              if (game.in_check()) AudioController.play('check');
+              else if (isPMCapture) AudioController.play('capture');
+              else AudioController.play('move');
             }
             pendingPremove = null;
           }
@@ -243,7 +352,7 @@ function startPolling() {
       .withFailureHandler(e => {
         handlePollError(e);
       })
-      .getGameState(roomId);
+      .getGameState(roomId, playerName);
   };
   
   const handlePollError = (err) => {
@@ -263,11 +372,10 @@ function startPolling() {
 
 function handleRemoteGameOver(gameOver) {
   if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+  if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
+  AudioController.play('gameEnd');
   document.getElementById('game-info-panel').innerText = `${gameOver.result} (${gameOver.reason})`;
   document.getElementById('btnReview').classList.remove('hidden');
-  document.getElementById('btnUndo').classList.add('hidden');
-  document.getElementById('btnDraw').classList.add('hidden');
-  document.getElementById('btnResign').classList.add('hidden');
   
   const overlay = document.createElement('div');
   overlay.className = 'game-over-overlay';
@@ -282,17 +390,39 @@ function handleRemoteGameOver(gameOver) {
 }
 
 // --- BOARD LOGIC ---
+let secretThemeClicks = 0;
+let lastSecretClickTime = 0;
 
 function initBoard() {
   boardEl.innerHTML = '';
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       const square = document.createElement('div');
+      const sqName = String.fromCharCode(97 + c) + (8 - r);
       square.className = `square ${(r + c) % 2 === 0 ? 'light' : 'dark'}`;
       square.dataset.row = r;
       square.dataset.col = c;
-      square.dataset.square = String.fromCharCode(97 + c) + (8 - r);
-      square.setAttribute('aria-label', square.dataset.square);
+      square.dataset.square = sqName;
+      square.setAttribute('aria-label', sqName);
+      
+      // Secret Theme Listener (a8 = top-left: r=0, c=0)
+      if (sqName === 'a8') {
+        square.addEventListener('mousedown', () => {
+           const now = Date.now();
+           if (now - lastSecretClickTime < 1000) {
+             secretThemeClicks++;
+           } else {
+             secretThemeClicks = 1;
+           }
+           lastSecretClickTime = now;
+           
+           if (secretThemeClicks >= 3) {
+             const current = document.body.getAttribute('data-theme');
+             document.body.setAttribute('data-theme', current === 'cyberpunk' ? '' : 'cyberpunk');
+             secretThemeClicks = 0;
+           }
+        });
+      }
       
       if (c === 0) {
         const rank = document.createElement('div');
@@ -328,8 +458,6 @@ function updateBoard() {
     const piece = b[r][c];
     
     let existingPiece = sq.querySelector('.piece');
-    let targetClass = piece ? `piece ${piece.color}${piece.type.toUpperCase()}` : '';
-    
     if (piece) {
       if (!existingPiece) {
         existingPiece = document.createElement('div');
@@ -337,6 +465,7 @@ function updateBoard() {
         existingPiece.addEventListener('dragstart', handleDragStart);
         sq.appendChild(existingPiece);
       }
+      const targetClass = `piece ${piece.color}${piece.type.toUpperCase()}`;
       if (existingPiece.className !== targetClass) {
         existingPiece.className = targetClass;
         const imgKey = piece.color + piece.type.toUpperCase();
@@ -344,19 +473,10 @@ function updateBoard() {
       }
       existingPiece.dataset.square = sq.dataset.square;
       existingPiece.style.transform = boardFlipped ? 'rotate(180deg)' : '';
-    } else {
-      if (existingPiece) existingPiece.remove();
-    }
-    
-    const coords = sq.querySelectorAll('.coord');
-    coords.forEach(coord => {
-      coord.style.transform = boardFlipped ? 'rotate(180deg)' : '';
-      coord.style.display = showCoords ? 'block' : 'none';
-    });
+    } else if (existingPiece) existingPiece.remove();
 
-    sq.classList.remove('highlight', 'last-move', 'in-check');
+    sq.classList.remove('highlight', 'legal-move', 'in-check', 'premove');
     sq.classList.remove('anno-best', 'anno-good', 'anno-inaccuracy', 'anno-mistake', 'anno-blunder');
-    sq.classList.remove('premove');
     const oldTag = sq.querySelector('.move-classification-tag');
     if (oldTag) oldTag.remove();
 
@@ -368,34 +488,24 @@ function updateBoard() {
   if (game.in_check()) {
     const kColor = game.turn();
     squares.forEach(sq => {
-      const r = parseInt(sq.dataset.row);
-      const c = parseInt(sq.dataset.col);
-      const p = b[r][c];
-      if (p && p.type === 'k' && p.color === kColor) {
-        sq.classList.add('in-check');
-      }
+      const p = b[parseInt(sq.dataset.row)][parseInt(sq.dataset.col)];
+      if (p && p.type === 'k' && p.color === kColor) sq.classList.add('in-check');
     });
   }
 
-  if (game.game_over()) {
-    document.getElementById('btnReview').classList.remove('hidden');
-    document.getElementById('btnUndo').classList.add('hidden');
-    document.getElementById('btnDraw').classList.add('hidden');
-    document.getElementById('btnResign').classList.add('hidden');
-  } else {
-    document.getElementById('btnReview').classList.add('hidden');
-    if (gameMode !== 'analysis') {
-      const undoBtn = document.getElementById('btnUndo');
-      undoBtn.classList.remove('hidden');
-      undoBtn.disabled = (game.history().length === 0);
-      undoBtn.style.opacity = (game.history().length === 0) ? '0.5' : '1';
-      
-      if (gameMode === 'online') {
-        document.getElementById('btnDraw').classList.remove('hidden');
-        document.getElementById('btnResign').classList.remove('hidden');
+  const isOver = game.game_over();
+  document.getElementById('btnReview').classList.toggle('hidden', !isOver);
+  const controls = ['btnUndo', 'btnDraw', 'btnResign'];
+  controls.forEach(id => {
+    const el = document.getElementById(id);
+    if(el) {
+      if (isOver || playerRole === 'spectator') el.classList.add('hidden');
+      else {
+        el.classList.remove('hidden');
+        if (id === 'btnUndo') { el.disabled = game.history().length === 0; el.style.opacity = el.disabled ? '0.5' : '1'; }
       }
     }
-  }
+  });
 
   updateMoveList();
   if (gameMode !== 'online' && gameMode !== 'analysis' && gameMode !== 'idle') {
@@ -403,64 +513,10 @@ function updateBoard() {
   }
 }
 
-// --- SVG VISUALIZATION ---
-
-function getSquareCenter(sq) {
-  const el = boardEl.querySelector(`[data-square="${sq}"]`);
-  if (!el) return { x: 0, y: 0 };
-  const rect = el.getBoundingClientRect();
-  const boardRect = boardEl.getBoundingClientRect();
-  return {
-    x: (rect.left - boardRect.left) + rect.width / 2,
-    y: (rect.top - boardRect.top) + rect.height / 2
-  };
-}
-
-function drawCircle(sq) {
-  const center = getSquareCenter(sq);
-  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-  circle.setAttribute("cx", center.x);
-  circle.setAttribute("cy", center.y);
-  circle.setAttribute("r", "40%");
-  circle.setAttribute("fill", "none");
-  circle.setAttribute("stroke", "#f23c32");
-  circle.setAttribute("stroke-width", "4");
-  circle.setAttribute("opacity", "0.7");
-  svgLayer.appendChild(circle);
-}
-
-function drawArrow(from, to) {
-  const start = getSquareCenter(from);
-  const end = getSquareCenter(to);
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const angle = Math.atan2(dy, dx);
-  const length = Math.sqrt(dx*dx + dy*dy);
-  const backOff = 15;
-  const endX = start.x + Math.cos(angle) * (length - backOff);
-  const endY = start.y + Math.sin(angle) * (length - backOff);
-
-  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-  line.setAttribute("x1", start.x);
-  line.setAttribute("y1", start.y);
-  line.setAttribute("x2", endX);
-  line.setAttribute("y2", endY);
-  line.setAttribute("stroke", "#f23c32");
-  line.setAttribute("stroke-width", "8");
-  line.setAttribute("opacity", "0.7");
-  line.setAttribute("marker-end", "url(#arrowhead)");
-  svgLayer.appendChild(line);
-}
-
-function clearSVG() {
-  svgLayer.innerHTML = '';
-}
-
 // --- INTERACTION ---
-
 function handleSquareClick(e) {
   clearSVG();
-  if (gameMode === 'analysis') return;
+  if (gameMode === 'analysis' || playerRole === 'spectator') return;
   
   const sq = e.currentTarget.dataset.square;
   if (pendingPremove) {
@@ -487,7 +543,7 @@ function handleSquareClick(e) {
 
 function handleDragStart(e) {
   clearSVG();
-  if (gameMode === 'analysis') { e.preventDefault(); return; }
+  if (gameMode === 'analysis' || playerRole === 'spectator') { e.preventDefault(); return; }
   
   if (connectionStatus !== 'green' && gameMode === 'online') {
     e.preventDefault();
@@ -495,13 +551,11 @@ function handleDragStart(e) {
   }
 
   const isOpponentTurn = (gameMode === 'online' && game.turn() !== playerColor);
-  const isPremoveEnabled = premoveToggle.checked;
-  
   const sq = e.target.dataset.square;
   const p = game.get(sq);
 
   if (isOpponentTurn) {
-    if (!isPremoveEnabled || (p && p.color !== playerColor)) {
+    if (!premoveToggle.checked || (p && p.color !== playerColor)) {
       e.preventDefault();
       return;
     }
@@ -520,13 +574,13 @@ function handleDragStart(e) {
 
 function handleDrop(e) {
   e.preventDefault();
+  if (playerRole === 'spectator') return;
   const from = e.dataTransfer.getData('text/plain');
   let target = e.target;
   if (target.classList.contains('piece')) target = target.parentElement;
   const to = target.dataset.square;
   
   const isOpponentTurn = (gameMode === 'online' && game.turn() !== playerColor);
-  
   if (isOpponentTurn && premoveToggle.checked) {
     pendingPremove = { from, to };
     updateBoard();
@@ -538,47 +592,13 @@ function handleDrop(e) {
   clearHighlights();
 }
 
-document.getElementById('board-wrapper').addEventListener('contextmenu', e => e.preventDefault());
-document.getElementById('board-wrapper').addEventListener('mousedown', e => {
-  if (e.button === 2) {
-    isRightClickDragging = true;
-    let target = e.target;
-    if (target.classList.contains('piece')) target = target.parentElement;
-    rightClickStartSq = target.dataset.square;
-  }
-});
-
-document.addEventListener('mouseup', e => {
-  if (e.button === 2 && isRightClickDragging) {
-    isRightClickDragging = false;
-    let target = e.target;
-    if (target.classList.contains('piece')) target = target.parentElement;
-    const endSq = target.dataset.square;
-    if (rightClickStartSq && endSq) {
-      if (rightClickStartSq === endSq) drawCircle(endSq);
-      else drawArrow(rightClickStartSq, endSq);
-    }
-    rightClickStartSq = null;
-  }
-});
-
-let previousFen = null;
-
-function errorCallback(error) {
-  if (previousFen) {
-    game.load(previousFen);
-    updateBoard();
-    alert("Network error: Move not saved. Reverting.");
-  }
-}
-
 function attemptMove(from, to, promo = null) {
+  document.getElementById('takeback-toast').classList.add('hidden');
   const drToast = document.getElementById('draw-toast');
   if (!drToast.classList.contains('hidden')) {
     drToast.classList.add('hidden');
     if (gameMode === 'online') google.script.run.resolveDraw(roomId, false);
   }
-  document.getElementById('takeback-toast').classList.add('hidden');
   
   if (gameMode !== 'local' && game.turn() !== playerColor) return;
 
@@ -594,178 +614,38 @@ function attemptMove(from, to, promo = null) {
     
     previousFen = game.fen();
     game.move({ from, to, promotion: promo || 'q' });
-    playSound('move');
+    
+    const isCapture = move.flags.includes('c') || move.flags.includes('e');
+    if (game.in_check()) AudioController.play('check');
+    else if (isCapture) AudioController.play('capture');
+    else AudioController.play('move');
+    
     updateBoard();
     
     if (gameMode === 'online') {
-      const currentFen = game.fen();
-      const isGameOver = game.game_over();
-      const moveCount = game.history().length;
-      try { 
-        google.script.run
-          .withSuccessHandler(res => {
-            if (res && !res.success) errorCallback(res.error);
-          })
-          .withFailureHandler(errorCallback)
-          .makeMove(roomId, currentFen, isGameOver, moveCount);
-      } catch(e) {
-        errorCallback(e);
-      }
-    } else if (gameMode === 'ai' && !game.game_over()) {
-      setTimeout(makeAIMove, 250);
-    } else if (gameMode === 'puzzle') {
-      const uciMove = from + to + (promo || '');
-      if (uciMove === puzzleSolution[currentPuzzleStep]) {
-        currentPuzzleStep++;
-        if (currentPuzzleStep >= puzzleSolution.length) {
-          setTimeout(() => alert('Puzzle solved!'), 100);
-        } else {
-          setTimeout(() => {
-            const oppMove = puzzleSolution[currentPuzzleStep];
-            game.move(oppMove, {sloppy: true});
-            playSound('move');
-            updateBoard();
-            currentPuzzleStep++;
-            if (currentPuzzleStep >= puzzleSolution.length) {
-              setTimeout(() => alert('Puzzle solved!'), 100);
-            }
-          }, 500);
-        }
-      } else {
-        setTimeout(() => alert('Incorrect move. Try again.'), 100);
-        game.undo();
-        updateBoard();
-      }
-    }
-
-    if (game.game_over() && gameMode !== 'puzzle') {
-      setTimeout(() => alert('Game Over!'), 100);
-    }
+      google.script.run
+        .withSuccessHandler(res => { if (res && !res.success) errorCallback(res.error); })
+        .withFailureHandler(errorCallback)
+        .makeMove(roomId, game.fen(), game.game_over(), game.history().length, playerColor);
+    } else if (gameMode === 'ai' && !game.game_over()) setTimeout(makeAIMove, 250);
+    if (game.game_over()) AudioController.play('gameEnd');
   } else {
     const fromEl = boardEl.querySelector(`[data-square="${from}"] .piece`);
-    if (fromEl) {
-      fromEl.classList.add('shake');
-      setTimeout(() => fromEl.classList.remove('shake'), 400);
-    }
+    if (fromEl) { fromEl.classList.add('shake'); setTimeout(() => fromEl.classList.remove('shake'), 400); }
   }
   selectedSquare = null;
   clearHighlights();
 }
 
-function showPromotionDialog() {
-  promoDialog.classList.remove('hidden');
-}
-
-document.querySelectorAll('.promo-piece').forEach(el => {
-  el.addEventListener('click', function() {
-    const promo = this.dataset.piece;
-    promoDialog.classList.add('hidden');
-    if (pendingMove) {
-      attemptMove(pendingMove.from, pendingMove.to, promo);
-      pendingMove = null;
-    }
-  });
-});
-
-function makeAIMove() {
-  if (gameMode !== 'ai' || game.game_over()) return;
-  const m = getBestMove(game, aiDepth);
-  if (m) {
-    game.move(m);
-    playSound('move');
-    updateBoard();
-    if (game.game_over()) {
-      setTimeout(() => alert('Game Over!'), 100);
-    }
-  }
-}
-
-// --- UI HELPERS ---
-
-function highlightSquare(sq) {
-  const el = boardEl.querySelector(`[data-square="${sq}"]`);
-  if (el) el.classList.add('highlight');
-}
-
-function clearHighlights() {
-  boardEl.querySelectorAll('.square').forEach(sq => {
-    sq.classList.remove('highlight', 'legal-move');
-  });
-}
-
-function highlightLegalMoves(sq) {
-  const moves = game.moves({ square: sq, verbose: true });
-  moves.forEach(m => {
-    const el = boardEl.querySelector(`[data-square="${m.to}"]`);
-    if (el) el.classList.add('legal-move');
-  });
-}
-
-function updateMoveList() {
-  const history = game.history({ verbose: true });
-  moveListEl.innerHTML = '';
-  let html = '';
-  for (let i = 0; i < history.length; i += 2) {
-    const turnNum = Math.floor(i / 2) + 1;
-    const isWActive = (analysisIndex === i);
-    const isBActive = (analysisIndex === i + 1);
-    html += `
-      <div class="move-row">
-        <div class="move-num">${turnNum}.</div>
-        <div class="move-val ${isWActive ? 'active' : ''}" onclick="goToAnalysisStep(${i})">
-          ${history[i].san}
-          ${renderMoveBadge(i)}
-        </div>
-        ${history[i+1] ? `
-          <div class="move-val ${isBActive ? 'active' : ''}" onclick="goToAnalysisStep(${i+1})">
-            ${history[i+1].san}
-            ${renderMoveBadge(i+1)}
-          </div>
-        ` : '<div class="move-val"></div>'}
-      </div>
-    `;
-  }
-  moveListEl.innerHTML = html;
-  const activeMove = moveListEl.querySelector('.active');
-  if (activeMove) activeMove.scrollIntoView({ block: 'nearest' });
-  else moveListEl.scrollTop = moveListEl.scrollHeight;
-}
-
-function renderMoveBadge(index) {
-  if (gameMode !== 'analysis' || !fullGameAnalysis[index]) return '';
-  const classification = fullGameAnalysis[index].classification.toLowerCase();
-  const icons = { brilliant: '!!', great: '!', best: '★', inaccuracy: '?!', mistake: '?', blunder: '??' };
-  return `<span class="badge badge-${classification}">${icons[classification] || ''}</span>`;
-}
-
-function jumpTo(index) {
-  if (gameMode === 'online') {
-    alert("Time travel is disabled during live online matches.");
-    return;
-  }
-  const history = game.history();
-  game.reset();
-  for (let i = 0; i <= index; i++) {
-    game.move(history[i]);
-  }
-  updateBoard();
-}
-
-function playSound(type) {}
-
-// --- BUTTON EVENTS ---
-
+// --- BUTTONS ---
 let resignStep = 0;
 document.getElementById('btnResign').addEventListener('click', function() {
+  if (playerRole === 'spectator') return;
   if (resignStep === 0) {
     this.innerText = "Sure?";
     this.style.background = "#fa412d";
     resignStep = 1;
-    setTimeout(() => {
-      this.innerText = "🏳 Resign";
-      this.style.background = "";
-      resignStep = 0;
-    }, 3000);
+    setTimeout(() => { this.innerText = "🏳 Resign"; this.style.background = ""; resignStep = 0; }, 3000);
   } else {
     google.script.run.resignGame(roomId, playerColor);
     resignStep = 0;
@@ -773,6 +653,7 @@ document.getElementById('btnResign').addEventListener('click', function() {
 });
 
 document.getElementById('btnDraw').addEventListener('click', function() {
+  if (playerRole === 'spectator') return;
   this.disabled = true;
   this.innerText = "Draw Offered...";
   google.script.run.offerDraw(roomId, playerColor);
@@ -788,343 +669,147 @@ document.getElementById('btnDeclineDraw').addEventListener('click', () => {
   google.script.run.resolveDraw(roomId, false);
 });
 
-document.getElementById('btnMenu').addEventListener('click', openWelcomeScreen);
-
 document.getElementById('btnUndo').addEventListener('click', () => {
+  if (playerRole === 'spectator') return;
   if (gameMode === 'online') { 
     if (game.history().length === 0) return;
     const btn = document.getElementById('btnUndo');
-    const originalText = btn.innerText;
-    btn.innerText = "Takeback Proposed...";
+    const oldText = btn.innerText;
+    btn.innerText = "Proposing...";
     btn.disabled = true;
     google.script.run
-      .withSuccessHandler(res => {
-        if (res && !res.success) {
-           btn.innerText = originalText;
-           btn.disabled = false;
-           alert("Takeback Failed: " + (res.message || res.error));
-        }
-      })
-      .withFailureHandler(() => {
-        btn.innerText = originalText;
-        btn.disabled = false;
-      })
+      .withSuccessHandler(res => { if (res && !res.success) { btn.innerText = oldText; btn.disabled = false; } })
+      .withFailureHandler(() => { btn.innerText = oldText; btn.disabled = false; })
       .requestTakeback(roomId, playerColor);
     return; 
   }
-  game.undo();
-  if (gameMode === 'ai') game.undo();
-  updateBoard();
+  game.undo(); if (gameMode === 'ai') game.undo(); updateBoard();
 });
 
 document.getElementById('btnAcceptTakeback').addEventListener('click', () => {
-  game.undo();
-  pendingPremove = null;
-  clearHighlights();
-  updateBoard();
-  const revertedFen = game.fen();
+  game.undo(); pendingPremove = null; clearHighlights(); updateBoard();
   document.getElementById('takeback-toast').classList.add('hidden');
-  google.script.run
-    .withSuccessHandler(res => {
-       if (res && !res.success) alert("Error: " + res.error);
-    })
-    .withFailureHandler(e => console.error("Takeback resolution failed:", e))
-    .resolveTakeback(roomId, true, revertedFen);
+  google.script.run.resolveTakeback(roomId, true, game.fen());
 });
 
 document.getElementById('btnDeclineTakeback').addEventListener('click', () => {
   document.getElementById('takeback-toast').classList.add('hidden');
-  google.script.run
-    .withSuccessHandler(res => {
-       if (res && !res.success) alert("Error: " + res.error);
-    })
-    .withFailureHandler(e => console.error("Takeback resolution failed:", e))
-    .resolveTakeback(roomId, false, null);
+  google.script.run.resolveTakeback(roomId, false, null);
 });
 
-document.getElementById('btnFlip').addEventListener('click', () => { 
-  boardFlipped = !boardFlipped; 
-  updateBoard(); 
-});
-
-document.getElementById('btnTheme').addEventListener('click', () => {
-  document.body.classList.toggle('theme-light');
-  document.body.classList.toggle('theme-dark');
-});
-
-document.getElementById('btnSave').addEventListener('click', () => {
-  const pgn = game.pgn();
-  try {
-    google.script.run
-      .withSuccessHandler(res => {
-        if (res && res.success) alert('Saved!');
-        else alert('Cloud save failed. Saved locally.');
-      })
-      .withFailureHandler(() => {
-        localStorage.setItem('chess_save', pgn);
-        alert('Saved to local storage.');
-      })
-      .saveGame(pgn);
-  } catch (e) {
-    localStorage.setItem('chess_save', pgn);
-    alert('Saved to local storage.');
-  }
-});
-
-document.getElementById('btnLoad').addEventListener('click', () => {
-  try {
-    google.script.run
-      .withSuccessHandler(res => {
-        if (res && res.success && res.data) { game.load_pgn(res.data); updateBoard(); }
-        else {
-           const data = localStorage.getItem('chess_save');
-           if (data) { game.load_pgn(data); updateBoard(); }
-        }
-      })
-      .withFailureHandler(() => {
-        const data = localStorage.getItem('chess_save');
-        if (data) { game.load_pgn(data); updateBoard(); }
-      })
-      .loadGame();
-  } catch (e) {
-    const data = localStorage.getItem('chess_save');
-    if (data) { game.load_pgn(data); updateBoard(); }
-  }
-});
-
-document.getElementById('btnExport').addEventListener('click', () => {
-  const blob = new Blob([game.pgn()], {type: "text/plain;charset=utf-8"});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'game.pgn';
-  a.click();
-});
-
-window.importPGN = function(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(evt) {
-    game.load_pgn(evt.target.result);
-    updateBoard();
-  };
-  reader.readAsText(file);
-};
-
-document.addEventListener('keydown', e => {
-  if (e.key === 'u' && document.getElementById('welcome-screen').classList.contains('hidden')) { 
-      document.getElementById('btnUndo').click(); 
-  }
-  if (e.key === 'f') { boardFlipped = !boardFlipped; updateBoard(); }
-});
-
-// --- EVALUATION BAR LOGIC ---
-
-let evalDebounceTimeout = null;
+// [Helper Functions for SVG, UI, Promotion, AI...]
+function getSquareCenter(sq) {
+  const el = boardEl.querySelector(`[data-square="${sq}"]`);
+  if (!el) return { x: 0, y: 0 };
+  const rect = el.getBoundingClientRect();
+  const boardRect = boardEl.getBoundingClientRect();
+  return { x: (rect.left - boardRect.left) + rect.width / 2, y: (rect.top - boardRect.top) + rect.height / 2 };
+}
+function drawCircle(sq) {
+  const center = getSquareCenter(sq);
+  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  circle.setAttribute("cx", center.x); circle.setAttribute("cy", center.y); circle.setAttribute("r", "40%");
+  circle.setAttribute("fill", "none"); circle.setAttribute("stroke", "#f23c32"); circle.setAttribute("stroke-width", "4"); circle.setAttribute("opacity", "0.7");
+  svgLayer.appendChild(circle);
+}
+function drawArrow(from, to) {
+  const start = getSquareCenter(from); const end = getSquareCenter(to);
+  const dx = end.x - start.x; const dy = end.y - start.y; const angle = Math.atan2(dy, dx); const length = Math.sqrt(dx*dx + dy*dy);
+  const backOff = 15; const endX = start.x + Math.cos(angle) * (length - backOff); const endY = start.y + Math.sin(angle) * (length - backOff);
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", start.x); line.setAttribute("y1", start.y); line.setAttribute("x2", endX); line.setAttribute("y2", endY);
+  line.setAttribute("stroke", "#f23c32"); line.setAttribute("stroke-width", "8"); line.setAttribute("opacity", "0.7"); line.setAttribute("marker-end", "url(#arrowhead)");
+  svgLayer.appendChild(line);
+}
+function clearSVG() { svgLayer.innerHTML = ''; }
+function highlightSquare(sq) { const el = boardEl.querySelector(`[data-square="${sq}"]`); if (el) el.classList.add('highlight'); }
+function clearHighlights() { boardEl.querySelectorAll('.square').forEach(sq => sq.classList.remove('highlight', 'legal-move')); }
+function highlightLegalMoves(sq) { game.moves({ square: sq, verbose: true }).forEach(m => { const el = boardEl.querySelector(`[data-square="${m.to}"]`); if (el) el.classList.add('legal-move'); }); }
+function showPromotionDialog() { promoDialog.classList.remove('hidden'); }
+document.querySelectorAll('.promo-piece').forEach(el => { el.addEventListener('click', function() { const promo = this.dataset.piece; promoDialog.classList.add('hidden'); if (pendingMove) { attemptMove(pendingMove.from, pendingMove.to, promo); pendingMove = null; } }); });
+function makeAIMove() { if (gameMode !== 'ai' || game.game_over()) return; const m = getBestMove(game, aiDepth); if (m) { game.move(m); updateBoard(); } }
+function showLeaderboard() {
+  showMenu('menu-leaderboard');
+  google.script.run.withSuccessHandler(players => {
+    document.getElementById('leaderboard-body').innerHTML = players.map((p, i) => `<tr><td>#${i+1}</td><td>${p.name}</td><td>${p.elo}</td><td>${p.wins}/${p.losses}/${p.draws}</td></tr>`).join('');
+  }).getLeaderboard();
+}
 
 function triggerEvaluation(depth = 10) {
   if (gameMode === 'online') return;
   if (evalDebounceTimeout) clearTimeout(evalDebounceTimeout);
   evalDebounceTimeout = setTimeout(() => {
-    enginePool.onEvalResult = (cp, mate, taskId) => {
-      if (taskId === 'live') updateEvalBar(cp, mate);
-    };
+    enginePool.onEvalResult = (cp, mate, taskId) => { if (taskId === 'live') updateEvalBar(cp, mate); };
     enginePool.evaluate(game.fen(), depth, 'live');
   }, 250);
 }
-
+let evalDebounceTimeout = null;
 function updateEvalBar(cp, mate) {
-  const fillEl = document.getElementById('eval-bar-fill');
-  const textEl = document.getElementById('eval-bar-text');
+  const fillEl = document.getElementById('eval-bar-fill'); const textEl = document.getElementById('eval-bar-text');
   if (!fillEl || !textEl) return;
-
-  let absoluteCp = cp;
-  if (game.turn() === 'b') absoluteCp = -cp;
-  let absoluteMate = mate;
-  if (mate !== null && game.turn() === 'b') absoluteMate = -mate;
-
-  let text = '';
-  let percentage = 50;
-
-  if (absoluteMate !== null) {
-    text = 'M' + Math.abs(absoluteMate);
-    percentage = absoluteMate > 0 ? 100 : 0;
-  } else {
-    percentage = 100 / (1 + Math.exp(-absoluteCp / 200));
-    text = (Math.abs(absoluteCp) / 100).toFixed(1);
-  }
-
-  if (boardFlipped) {
-    fillEl.style.height = (100 - percentage) + '%';
-    textEl.className = percentage > 50 ? 'eval-bar-text top' : 'eval-bar-text bottom';
-  } else {
-    fillEl.style.height = percentage + '%';
-    textEl.className = percentage > 50 ? 'eval-bar-text bottom' : 'eval-bar-text top';
-  }
-  textEl.innerText = text;
+  let absCp = (game.turn() === 'b' ? -cp : cp); let absMate = (mate !== null && game.turn() === 'b' ? -mate : mate);
+  let percentage = absMate !== null ? (absMate > 0 ? 100 : 0) : 100 / (1 + Math.exp(-absCp / 200));
+  fillEl.style.height = (boardFlipped ? 100 - percentage : percentage) + '%';
+  textEl.innerText = absMate !== null ? 'M' + Math.abs(absMate) : (Math.abs(absCp) / 100).toFixed(1);
+  textEl.className = 'eval-bar-text ' + (percentage > 50 ? (boardFlipped ? 'top' : 'bottom') : (boardFlipped ? 'bottom' : 'top'));
 }
 
-// --- POST-GAME ANALYSIS MODE ---
-
-let analysisHistory = [];
-let analysisIndex = -1;
-let fullGameAnalysis = [];
-
+let analysisHistory = []; let analysisIndex = -1; let fullGameAnalysis = [];
 async function startAnalysisMode() {
-  gameMode = 'analysis';
-  analysisHistory = game.history({ verbose: true });
-  analysisIndex = analysisHistory.length - 1;
-  document.getElementById('main-controls').classList.add('hidden');
-  document.getElementById('analysis-controls').classList.remove('hidden');
-  document.getElementById('game-info-panel').innerText = "Analyzing Game...";
-  document.getElementById('analysis-report').classList.remove('hidden');
-  resetReportUI();
-
-  const startTime = performance.now();
-  await runFullGameAnalysis();
-  const endTime = performance.now();
-  
-  document.getElementById('execution-time').innerText = Math.round(endTime - startTime);
-  document.getElementById('thread-count').innerText = enginePool.poolSize;
-
-  updateBoard();
-  triggerEvaluation(16);
+  gameMode = 'analysis'; analysisHistory = game.history({ verbose: true }); analysisIndex = analysisHistory.length - 1;
+  document.getElementById('main-controls').classList.add('hidden'); document.getElementById('analysis-controls').classList.remove('hidden');
+  document.getElementById('game-info-panel').innerText = "Analyzing Game..."; document.getElementById('analysis-report').classList.remove('hidden');
+  document.getElementById('white-elo').innerText = "---"; document.getElementById('black-elo').innerText = "---";
+  const startTime = performance.now(); await runFullGameAnalysis(); const endTime = performance.now();
+  document.getElementById('execution-time').innerText = Math.round(endTime - startTime); document.getElementById('thread-count').innerText = enginePool.poolSize;
+  updateBoard(); triggerEvaluation(16);
 }
-
-function resetReportUI() {
-  document.getElementById('white-elo').innerText = "---";
-  document.getElementById('black-elo').innerText = "---";
-  document.getElementById('white-acc').innerText = "0%";
-  document.getElementById('black-acc').innerText = "0%";
-  document.getElementById('move-tally').innerHTML = '';
-}
-
 async function runFullGameAnalysis() {
-  fullGameAnalysis = [];
-  const history = game.history({ verbose: true });
-  const tempGame = new Chess();
-  const fensToEval = [tempGame.fen()];
-  for (let move of history) {
-    tempGame.move(move);
-    fensToEval.push(tempGame.fen());
-  }
-
-  const evalPromises = fensToEval.map((fen, index) => {
-    return new Promise(resolve => {
-      const checkResult = (cp, mate, taskId) => {
-        if (taskId === `batch_${index}`) resolve({ cp, mate });
-      };
-      const originalListener = enginePool.onEvalResult;
-      enginePool.onEvalResult = (cp, mate, taskId) => {
-        if (originalListener) originalListener(cp, mate, taskId);
-        checkResult(cp, mate, taskId);
-      };
-      enginePool.evaluate(fen, 12, `batch_${index}`);
-    });
-  });
-
+  fullGameAnalysis = []; const history = game.history({ verbose: true }); const tempGame = new Chess(); const fens = [tempGame.fen()];
+  for (let m of history) { tempGame.move(m); fens.push(tempGame.fen()); }
+  const evalPromises = fens.map((f, i) => new Promise(resolve => {
+      enginePool.evaluate(f, 12, `batch_${i}`);
+      const check = (cp, mate, tid) => { if (tid === `batch_${i}`) { resolve({ cp, mate }); } };
+      const original = enginePool.onEvalResult;
+      enginePool.onEvalResult = (cp, mate, tid) => { if (original) original(cp, mate, tid); check(cp, mate, tid); };
+  }));
   const evals = await Promise.all(evalPromises);
-  let whiteCPLs = [];
-  let blackCPLs = [];
-  let tallies = { brilliant: 0, great: 0, best: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0 };
-
+  let wCPLs = []; let bCPLs = []; let tallies = { brilliant: 0, great: 0, best: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0 };
   for (let i = 0; i < history.length; i++) {
-    const prevEval = evals[i];
-    const currEval = evals[i+1];
-    const turn = i % 2 === 0 ? 'w' : 'b';
-    let cpl = calculateCPL(prevEval, currEval, turn);
-    let classification = classifyMove(cpl);
-    if (turn === 'w') whiteCPLs.push(cpl); else blackCPLs.push(cpl);
-    tallies[classification.toLowerCase()]++;
-    fullGameAnalysis.push({ move: history[i], eval: currEval, cpl: cpl, classification: classification });
+    const prev = evals[i]; const curr = evals[i+1]; const turn = i % 2 === 0 ? 'w' : 'b';
+    let pVal = prev.cp; if (prev.mate !== null) pVal = prev.mate > 0 ? 10000 : -10000;
+    let cVal = curr.cp; if (curr.mate !== null) cVal = curr.mate > 0 ? 10000 : -10000;
+    let cpl = Math.max(0, turn === 'w' ? (pVal - cVal) : (cVal - pVal));
+    let cls = "Good"; if (cpl < 5) cls = "Brilliant"; else if (cpl < 12) cls = "Great"; else if (cpl < 25) cls = "Best"; else if (cpl <= 55) cls = "Good"; else if (cpl <= 110) cls = "Inaccuracy"; else if (cpl <= 260) cls = "Mistake"; else cls = "Blunder";
+    if (turn === 'w') wCPLs.push(cpl); else bCPLs.push(cpl);
+    tallies[cls.toLowerCase()]++;
+    fullGameAnalysis.push({ move: history[i], eval: curr, cpl: cpl, classification: cls });
   }
-
-  displayAnalysisReport(whiteCPLs, blackCPLs, tallies);
+  displayAnalysisReport(wCPLs, bCPLs, tallies);
   document.getElementById('game-info-panel').innerText = "Analysis Mode";
 }
-
-function calculateCPL(prev, curr, turn) {
-  let p = prev.cp; if (prev.mate !== null) p = prev.mate > 0 ? 10000 : -10000;
-  let c = curr.cp; if (curr.mate !== null) c = curr.mate > 0 ? 10000 : -10000;
-  let cpl = turn === 'w' ? (p - c) : (c - p);
-  return Math.max(0, cpl);
+function displayAnalysisReport(w, b, t) {
+  const acplW = w.reduce((a,x)=>a+x,0)/(w.length||1); const acplB = b.reduce((a,x)=>a+x,0)/(b.length||1);
+  const accW = Math.round(Math.max(0, 100 - acplW/2)); const accB = Math.round(Math.max(0, 100 - acplB/2));
+  document.getElementById('white-elo').innerText = Math.max(400, Math.min(3000, Math.round(2900 - acplW*22)));
+  document.getElementById('black-elo').innerText = Math.max(400, Math.min(3000, Math.round(2900 - acplB*22)));
+  document.getElementById('white-acc').innerText = accW + "%"; document.getElementById('black-acc').innerText = accB + "%";
+  document.getElementById('white-acc-ring').style.strokeDashoffset = 226 - (226*accW)/100;
+  document.getElementById('black-acc-ring').style.strokeDashoffset = 226 - (226*accB)/100;
+  const items = [{l:'Brilliant',k:'brilliant',c:'var(--color-brilliant)'},{l:'Great',k:'great',c:'var(--color-great)'},{l:'Best',k:'best',c:'var(--color-best)'},{l:'Inacc',k:'inaccuracy',c:'var(--color-inaccuracy)'},{l:'Mistake',k:'mistake',c:'var(--color-mistake)'},{l:'Blunder',k:'blunder',c:'var(--color-blunder)'}];
+  document.getElementById('move-tally').innerHTML = items.map(i => `<div class="tally-item" style="border-left: 3px solid ${i.c}"><span>${i.l}</span><b>${t[i.k]||0}</b></div>`).join('');
 }
-
-function classifyMove(cpl) {
-  if (cpl < 5) return "Brilliant";
-  if (cpl < 12) return "Great";
-  if (cpl < 25) return "Best";
-  if (cpl <= 55) return "Good";
-  if (cpl <= 110) return "Inaccuracy";
-  if (cpl <= 260) return "Mistake";
-  return "Blunder";
-}
-
-function displayAnalysisReport(wLabels, bLabels, tallies) {
-  const acplW = wLabels.reduce((a,b) => a+b, 0) / (wLabels.length || 1);
-  const acplB = bLabels.reduce((a,b) => a+b, 0) / (bLabels.length || 1);
-  const eloW = estimateElo(acplW);
-  const eloB = estimateElo(acplB);
-  const accW = Math.round(Math.max(0, 100 - acplW/2));
-  const accB = Math.round(Math.max(0, 100 - acplB/2));
-
-  document.getElementById('white-elo').innerText = eloW;
-  document.getElementById('black-elo').innerText = eloB;
-  document.getElementById('white-acc').innerText = accW + "%";
-  document.getElementById('black-acc').innerText = accB + "%";
-  
-  const setRing = (id, val) => {
-    const offset = 226 - (226 * val) / 100;
-    document.getElementById(id).style.strokeDashoffset = offset;
-  };
-  setRing('white-acc-ring', accW);
-  setRing('black-acc-ring', accB);
-
-  const tallyContainer = document.getElementById('move-tally');
-  const items = [
-    { label: 'Brilliant', key: 'brilliant', color: 'var(--color-brilliant)' },
-    { label: 'Great', key: 'great', color: 'var(--color-great)' },
-    { label: 'Best', key: 'best', color: 'var(--color-best)' },
-    { label: 'Inacc', key: 'inaccuracy', color: 'var(--color-inaccuracy)' },
-    { label: 'Mistake', key: 'mistake', color: 'var(--color-mistake)' },
-    { label: 'Blunder', key: 'blunder', color: 'var(--color-blunder)' }
-  ];
-  tallyContainer.innerHTML = items.map(i => `
-    <div class="tally-item" style="border-left: 3px solid ${i.color}">
-      <span>${i.label}</span>
-      <b>${tallies[i.key] || 0}</b>
-    </div>
-  `).join('');
-}
-
-function estimateElo(acpl) {
-  let elo = 2900 - (acpl * 22);
-  return Math.max(400, Math.min(3000, Math.round(elo)));
-}
-
-function exitAnalysisMode() {
-  document.getElementById('analysis-controls').classList.add('hidden');
-  document.getElementById('analysis-report').classList.add('hidden');
-  document.getElementById('main-controls').classList.remove('hidden');
-  openWelcomeScreen();
-}
-
+function exitAnalysisMode() { document.getElementById('analysis-controls').classList.add('hidden'); document.getElementById('analysis-report').classList.add('hidden'); document.getElementById('main-controls').classList.remove('hidden'); openWelcomeScreen(); }
 function goToAnalysisStep(index) {
   if (index < -1 || index >= analysisHistory.length) return;
-  analysisIndex = index;
-  game.reset();
-  for (let i = 0; i <= index; i++) game.move(analysisHistory[i]);
+  analysisIndex = index; game.reset(); for (let i = 0; i <= index; i++) game.move(analysisHistory[i]);
   updateBoard();
   if (index >= 0 && fullGameAnalysis[index]) {
-    const move = fullGameAnalysis[index].move;
-    const classification = fullGameAnalysis[index].classification.toLowerCase();
-    const toSq = boardEl.querySelector(`[data-square="${move.to}"]`);
+    const m = fullGameAnalysis[index].move; const cls = fullGameAnalysis[index].classification.toLowerCase();
+    const toSq = boardEl.querySelector(`[data-square="${m.to}"]`);
     if (toSq) {
       const icons = { brilliant: '!!', great: '!', best: '★', inaccuracy: '?!', mistake: '?', blunder: '??' };
-      const badge = document.createElement('div');
-      badge.className = `badge badge-${classification} square-badge`;
-      badge.innerText = icons[classification] || '';
-      toSq.appendChild(badge);
+      const badge = document.createElement('div'); badge.className = `badge badge-${cls} square-badge`; badge.innerText = icons[cls] || ''; toSq.appendChild(badge);
     }
   }
   triggerEvaluation(16);
@@ -1134,10 +819,12 @@ document.getElementById('btnReview').addEventListener('click', startAnalysisMode
 document.getElementById('btnPrevMove').addEventListener('click', () => goToAnalysisStep(analysisIndex - 1));
 document.getElementById('btnNextMove').addEventListener('click', () => goToAnalysisStep(analysisIndex + 1));
 document.getElementById('btnExitAnalysis').addEventListener('click', exitAnalysisMode);
+document.getElementById('btnMenu').addEventListener('click', openWelcomeScreen);
+document.getElementById('btnFlip').addEventListener('click', () => { boardFlipped = !boardFlipped; updateBoard(); });
+document.getElementById('btnTheme').addEventListener('click', () => { document.body.classList.toggle('theme-light'); document.body.classList.toggle('theme-dark'); });
+document.getElementById('btnSave').addEventListener('click', () => { const pgn = game.pgn(); google.script.run.withSuccessHandler(res => { if (res && res.success) alert('Saved!'); else alert('Cloud save failed.'); }).withFailureHandler(() => { localStorage.setItem('chess_save', pgn); alert('Saved locally.'); }).saveGame(pgn); });
+document.getElementById('btnLoad').addEventListener('click', () => { google.script.run.withSuccessHandler(res => { if (res && res.success && res.data) { game.load_pgn(res.data); updateBoard(); } else { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } } }).withFailureHandler(() => { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } }).loadGame(); });
+document.getElementById('btnExport').addEventListener('click', () => { const blob = new Blob([game.pgn()], {type: "text/plain;charset=utf-8"}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'game.pgn'; a.click(); });
 
-// START
-document.addEventListener('DOMContentLoaded', () => {
-  initBoard();
-  document.getElementById('welcome-screen').classList.remove('hidden');
-});
+document.addEventListener('DOMContentLoaded', () => { initBoard(); document.getElementById('welcome-screen').classList.remove('hidden'); });
 </script>
