@@ -8,7 +8,7 @@ A professional-grade, high-performance, real-time multiplayer chess application 
 
 - **🌐 Lightning-Fast Multiplayer:** Real-time play powered by GAS `CacheService` and `LockService`. Achieves sub-50ms synchronization to bypass traditional Google Sheets latency.
 - **🎨 Pro UI/UX (Chess.com Style):** A pixel-perfect dark mode interface featuring tactile 3D buttons, a responsive split-pane layout, and the classic green/cream board aesthetic.
-- **⏱️ Server-Authoritative Time Controls:** Professional digital clocks for White and Black with server-side time calculation and automatic flagging (timeouts).
+- **⏱️ Flexible Time Controls:** Choose between several Blitz, Rapid, and Classical durations, or play a casual game with **Unlimited Time** (indicated by the infinity symbol).
 - **🏆 Persistent Office Leaderboard:** A persistent ELO rating system stored in Google Sheets. Compete with colleagues and track wins, losses, and draws.
 - **👁️ Spectator Mode:** Join any active room as a spectator to watch games live. Supports an unlimited number of viewers per room.
 - **🔊 High-Fidelity Feedback:** 

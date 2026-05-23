@@ -53,6 +53,19 @@
 
       <div id="menu-online" class="menu-section hidden">
         <h3 style="color:var(--text-secondary)">Online Room</h3>
+        
+        <div style="margin-bottom: 15px; text-align: left;">
+          <label style="color:var(--text-secondary); font-size: 12px; font-weight: bold; display: block; margin-bottom: 5px;">Time Control:</label>
+          <select id="time-control-select" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #fff; padding: 10px; border-radius: 4px; cursor: pointer;">
+            <option value="null">Unlimited (Casual)</option>
+            <option value="60000">1 Minute (Bullet)</option>
+            <option value="180000">3 Minutes (Blitz)</option>
+            <option value="300000" selected>5 Minutes (Blitz)</option>
+            <option value="600000">10 Minutes (Rapid)</option>
+            <option value="1800000">30 Minutes (Classical)</option>
+          </select>
+        </div>
+
         <button class="btn-primary" style="width:100%; margin-bottom:15px;" onclick="createOnlineRoom()">Create New</button>
         <div style="display:flex; gap:5px; margin-bottom:15px;">
            <input type="text" id="room-code-input" placeholder="CODE" maxlength="4" style="flex:1; background:#1a1a1a; border:1px solid #444; color:#fff; padding:10px; border-radius:4px; text-align:center; text-transform:uppercase;">

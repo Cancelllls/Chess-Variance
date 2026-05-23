@@ -89,19 +89,20 @@ function setConnectionStatus(status) {
 function updateClocks() {
   const now = Date.now();
   if (gameMode === 'online' && !game.game_over()) {
-    const elapsed = now - lastServerSync;
-    if (game.turn() === 'w') whiteTime = Math.max(0, whiteTime - elapsed);
-    else blackTime = Math.max(0, blackTime - elapsed);
-    lastServerSync = now;
-    
-    // Auto-flag check locally
-    if (whiteTime <= 0 || blackTime <= 0) {
-      // Backend will catch this on next poll or move, but we stop locally
-      if (clockInterval) clearInterval(clockInterval);
+    if (whiteTime !== null && blackTime !== null) {
+      const elapsed = now - lastServerSync;
+      if (game.turn() === 'w') whiteTime = Math.max(0, whiteTime - elapsed);
+      else blackTime = Math.max(0, blackTime - elapsed);
+      lastServerSync = now;
+      
+      if (whiteTime <= 0 || blackTime <= 0) {
+        if (clockInterval) clearInterval(clockInterval);
+      }
     }
   }
   
   const formatTime = (ms) => {
+    if (ms === null) return "∞";
     const totalSec = Math.floor(ms / 1000);
     const min = Math.floor(totalSec / 60);
     const sec = totalSec % 60;
@@ -114,12 +115,12 @@ function updateClocks() {
   if(bEl) bEl.innerText = formatTime(blackTime);
   
   if(wEl) {
-    wEl.classList.toggle('active', game.turn() === 'w');
-    wEl.classList.toggle('low-time', whiteTime < 30000);
+    wEl.classList.toggle('active', game.turn() === 'w' && whiteTime !== null);
+    wEl.classList.toggle('low-time', whiteTime !== null && whiteTime < 30000);
   }
   if(bEl) {
-    bEl.classList.toggle('active', game.turn() === 'b');
-    bEl.classList.toggle('low-time', blackTime < 30000);
+    bEl.classList.toggle('active', game.turn() === 'b' && blackTime !== null);
+    bEl.classList.toggle('low-time', blackTime !== null && blackTime < 30000);
   }
 }
 
@@ -179,6 +180,7 @@ function startAIGame(color) {
 
 function createOnlineRoom() {
   const pName = document.getElementById('player-name-input').value || "Guest";
+  const timeControl = document.getElementById('time-control-select').value;
   document.getElementById('online-status').innerText = "Creating room...";
   const undoBtn = document.getElementById('btnUndo');
   undoBtn.innerText = "Undo";
@@ -192,7 +194,10 @@ function createOnlineRoom() {
         playerRole = 'player';
         boardFlipped = false;
         game.reset();
-        whiteTime = blackTime = 300000;
+        
+        const tc = (timeControl === "null") ? null : parseInt(timeControl, 10);
+        whiteTime = blackTime = tc;
+        
         updateBoard();
         document.getElementById('game-info-panel').innerText = "Room Code: " + roomId;
         closeWelcomeScreen();
@@ -201,7 +206,7 @@ function createOnlineRoom() {
       .withFailureHandler(e => {
         document.getElementById('online-status').innerText = "Server Error: Failed to create room.";
       })
-      .createRoom(pName);
+      .createRoom(pName, timeControl);
   } catch(e) {
     document.getElementById('online-status').innerText = "Error: Network error detected.";
   }

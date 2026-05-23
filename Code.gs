@@ -30,12 +30,16 @@ function loadGame() {
 
 // ---- Online Multiplayer Backend Functions ----
 
-function createRoom(playerName) {
+function createRoom(playerName, timeControl) {
   var roomId = '';
   var characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   for (var i = 0; i < 4; i++) {
     roomId += characters.charAt(Math.floor(Math.random() * characters.length));
   }
+  
+  // Handle Unlimited Time
+  var tc = (timeControl === "null" || timeControl === null) ? null : parseInt(timeControl, 10);
+  
   var state = {
     fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
     takebackRequest: null,
@@ -43,10 +47,10 @@ function createRoom(playerName) {
     gameOver: null,
     whitePlayer: playerName || "White",
     blackPlayer: null,
-    whiteTime: 300000,
-    blackTime: 300000,
+    whiteTime: tc,
+    blackTime: tc,
     lastMoveTimestamp: Date.now(),
-    timeControl: 300000
+    timeControl: tc
   };
   CacheService.getScriptCache().put('chess_state_' + roomId, JSON.stringify(state), 21600);
   return roomId;
@@ -107,20 +111,22 @@ function makeMove(gameId, fenString, isGameOver, moveCount, playerColor) {
     
     if (state.gameOver) return { success: false, error: "GAME_ALREADY_OVER" };
 
-    // Update Clocks
+    // Update Clocks if not Unlimited
     var now = Date.now();
-    var elapsed = now - state.lastMoveTimestamp;
-    if (playerColor === 'w') {
-      state.whiteTime -= elapsed;
-      if (state.whiteTime <= 0) {
-        state.whiteTime = 0;
-        state.gameOver = { result: "0-1", reason: "White flagged (Timeout)" };
-      }
-    } else {
-      state.blackTime -= elapsed;
-      if (state.blackTime <= 0) {
-        state.blackTime = 0;
-        state.gameOver = { result: "1-0", reason: "Black flagged (Timeout)" };
+    if (state.timeControl !== null) {
+      var elapsed = now - state.lastMoveTimestamp;
+      if (playerColor === 'w') {
+        state.whiteTime -= elapsed;
+        if (state.whiteTime <= 0) {
+          state.whiteTime = 0;
+          state.gameOver = { result: "0-1", reason: "White flagged (Timeout)" };
+        }
+      } else {
+        state.blackTime -= elapsed;
+        if (state.blackTime <= 0) {
+          state.blackTime = 0;
+          state.gameOver = { result: "1-0", reason: "Black flagged (Timeout)" };
+        }
       }
     }
     state.lastMoveTimestamp = now;
