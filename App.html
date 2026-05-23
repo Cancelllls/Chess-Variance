@@ -517,10 +517,19 @@ document.addEventListener('keydown', e => {
 
 // --- EVALUATION BAR LOGIC ---
 
+let evalDebounceTimeout = null;
+
 function triggerEvaluation(depth = 10) {
-  if (gameMode === 'online') return; // Eval disabled in online mode to save bandwidth
-  engineWorker.onEvalResult = updateEvalBar;
-  engineWorker.evaluate(game.fen(), depth);
+  if (gameMode === 'online') return;
+  
+  if (evalDebounceTimeout) clearTimeout(evalDebounceTimeout);
+  
+  evalDebounceTimeout = setTimeout(() => {
+    enginePool.onEvalResult = (cp, mate, taskId) => {
+      if (taskId === 'live') updateEvalBar(cp, mate);
+    };
+    enginePool.evaluate(game.fen(), depth, 'live');
+  }, 250); // 250ms Debounce to prevent UI lag during active piece dragging
 }
 
 function updateEvalBar(cp, mate) {
@@ -583,8 +592,13 @@ async function startAnalysisMode() {
   document.getElementById('analysis-report').classList.remove('hidden');
   resetReportUI();
 
+  const startTime = performance.now();
   await runFullGameAnalysis();
+  const endTime = performance.now();
   
+  document.getElementById('execution-time').innerText = Math.round(endTime - startTime);
+  document.getElementById('thread-count').innerText = enginePool.poolSize;
+
   updateBoard();
   triggerEvaluation(16); // High depth for current position
 }
@@ -602,21 +616,31 @@ async function runFullGameAnalysis() {
   const history = game.history({ verbose: true });
   const tempGame = new Chess();
   
-  // We need evals for all positions: start + after every move
   const fensToEval = [tempGame.fen()];
   for (let move of history) {
     tempGame.move(move);
     fensToEval.push(tempGame.fen());
   }
 
-  const evals = [];
-  for (let i = 0; i < fensToEval.length; i++) {
-    const res = await new Promise(resolve => {
-      engineWorker.onEvalResult = (cp, mate) => resolve({ cp, mate });
-      engineWorker.evaluate(fensToEval[i], 12);
+  // Multi-threaded Parallel Evaluation
+  const evalPromises = fensToEval.map((fen, index) => {
+    return new Promise(resolve => {
+      const checkResult = (cp, mate, taskId) => {
+        if (taskId === `batch_${index}`) {
+          resolve({ cp, mate });
+        }
+      };
+      // Use temporary listener for the pool result
+      const originalListener = enginePool.onEvalResult;
+      enginePool.onEvalResult = (cp, mate, taskId) => {
+        if (originalListener) originalListener(cp, mate, taskId);
+        checkResult(cp, mate, taskId);
+      };
+      enginePool.evaluate(fen, 12, `batch_${index}`);
     });
-    evals.push(res);
-  }
+  });
+
+  const evals = await Promise.all(evalPromises);
 
   // Calculate CPL and Classify
   let whiteCPLs = [];

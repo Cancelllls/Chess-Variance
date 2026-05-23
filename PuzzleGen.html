@@ -1,14 +1,17 @@
 <script>
-class EngineWorker {
+class EnginePool {
   constructor() {
-    this.worker = null;
+    this.poolSize = navigator.hardwareConcurrency || 4;
+    this.workers = [];
+    this.taskQueue = [];
     this.onPuzzleFound = null;
     this.onEvalResult = null;
     this.isGenerating = false;
+    this.isInitialized = false;
   }
 
-  initWorker() {
-    if (this.worker) return;
+  initPool() {
+    if (this.isInitialized) return;
     const chessCode = document.getElementById('chess-engine').innerText;
     const stockfishCode = document.getElementById('stockfish-engine').innerText;
 
@@ -16,15 +19,22 @@ class EngineWorker {
       ${chessCode}
       ${stockfishCode}
 
+      // WASM Memory Optimization & Performance Tuning
       let stockfish = typeof STOCKFISH !== "undefined" ? STOCKFISH() : Stockfish();
       
       let game = new Chess();
-      let state = 'IDLE'; // IDLE, SEED, EVAL_INITIAL, EXTRACT_MOVE, LIVE_EVAL
+      let state = 'IDLE'; 
       let solutionMoves = [];
       let initialFen = '';
       let extractionDepth = 0;
       let lastEval = 0;
       let mateEval = null;
+      let currentTaskId = null;
+
+      // Hardware Acceleration: Hash Memory Allocation
+      stockfish.postMessage('uci');
+      stockfish.postMessage('setoption name Hash value 32');
+      stockfish.postMessage('isready');
 
       function randomMove() {
         const moves = game.moves();
@@ -36,7 +46,7 @@ class EngineWorker {
 
       function generateRandomGame() {
         game.reset();
-        const numMoves = 20 + Math.floor(Math.random() * 20); // 20 to 40 moves
+        const numMoves = 20 + Math.floor(Math.random() * 20);
         for(let i=0; i<numMoves; i++) {
           if(game.game_over()) break;
           randomMove();
@@ -47,7 +57,7 @@ class EngineWorker {
       stockfish.onmessage = function(event) {
         const line = event.data || event;
         
-        if (state === 'LIVE_EVAL') {
+        if (state === 'LIVE_EVAL' || state === 'BATCH_EVAL') {
           if (line.startsWith('info depth')) {
             const cpMatch = line.match(/score cp (-?\\d+)/);
             if (cpMatch) { lastEval = parseInt(cpMatch[1]); mateEval = null; }
@@ -55,7 +65,7 @@ class EngineWorker {
             if (mateMatch) { mateEval = parseInt(mateMatch[1]); lastEval = mateEval > 0 ? 10000 : -10000; }
           }
           if (line.startsWith('bestmove')) {
-             postMessage({ type: 'EVAL_RESULT', cp: lastEval, mate: mateEval });
+             postMessage({ type: 'EVAL_RESULT', cp: lastEval, mate: mateEval, taskId: currentTaskId });
              state = 'IDLE';
           }
         } else if (state === 'EVAL_INITIAL') {
@@ -66,7 +76,6 @@ class EngineWorker {
             if (mateMatch) lastEval = parseInt(mateMatch[1]) > 0 ? 10000 : -10000;
           }
           if (line.startsWith('bestmove')) {
-            // Check if position is tactical (jump in eval > 400 or mate)
             if (Math.abs(lastEval) > 400 || Math.abs(lastEval) === 10000) {
                const parts = line.split(' ');
                if(parts.length > 1 && parts[1] !== '(none)') {
@@ -79,7 +88,6 @@ class EngineWorker {
                  return;
                }
             }
-            // Retry
             startGeneration();
           }
         } else if (state === 'EXTRACT_RESPONSE' || state === 'EXTRACT_MOVE') {
@@ -106,7 +114,6 @@ class EngineWorker {
         state = 'SEED';
         solutionMoves = [];
         initialFen = generateRandomGame();
-        
         state = 'EVAL_INITIAL';
         stockfish.postMessage('position fen ' + initialFen);
         stockfish.postMessage('go depth 12');
@@ -115,77 +122,95 @@ class EngineWorker {
       onmessage = function(e) {
         if (e.data && e.data.type === 'GENERATE_PUZZLE') {
           startGeneration();
-        } else if (e.data && e.data.type === 'EVALUATE') {
-          state = 'LIVE_EVAL';
+        } else if (e.data && (e.data.type === 'EVALUATE' || e.data.type === 'BATCH_TASK')) {
+          state = e.data.type === 'EVALUATE' ? 'LIVE_EVAL' : 'BATCH_EVAL';
+          currentTaskId = e.data.taskId || null;
           lastEval = 0;
           mateEval = null;
-          stockfish.postMessage('stop'); // Stop any current evaluation
+          stockfish.postMessage('stop');
           stockfish.postMessage('position fen ' + e.data.fen);
           stockfish.postMessage('go depth ' + (e.data.depth || 14));
         }
       };
-
-      stockfish.postMessage('uci');
-      stockfish.postMessage('isready');
     `;
 
     const blob = new Blob([workerScript], { type: 'application/javascript' });
-    this.worker = new Worker(URL.createObjectURL(blob));
-    
-    this.worker.onmessage = (e) => {
-      if (e.data && e.data.type === 'PUZZLE_FOUND') {
-        if (this.onPuzzleFound) {
-          this.onPuzzleFound(e.data.fen, e.data.solution);
-        }
-        this.isGenerating = false;
-      } else if (e.data && e.data.type === 'EVAL_RESULT') {
-        if (this.onEvalResult) {
-          this.onEvalResult(e.data.cp, e.data.mate);
-        }
-      }
-    };
+    const blobUrl = URL.createObjectURL(blob);
+
+    for (let i = 0; i < this.poolSize; i++) {
+      const worker = new Worker(blobUrl);
+      worker.isBusy = false;
+      worker.onmessage = (e) => this.handleWorkerMessage(worker, e);
+      this.workers.push(worker);
+    }
+    this.isInitialized = true;
+  }
+
+  handleWorkerMessage(worker, e) {
+    if (e.data && e.data.type === 'PUZZLE_FOUND') {
+      if (this.onPuzzleFound) this.onPuzzleFound(e.data.fen, e.data.solution);
+      worker.isBusy = false;
+      this.isGenerating = false;
+      this.processQueue();
+    } else if (e.data && e.data.type === 'EVAL_RESULT') {
+      if (this.onEvalResult) this.onEvalResult(e.data.cp, e.data.mate, e.data.taskId);
+      worker.isBusy = false;
+      this.processQueue();
+    }
+  }
+
+  processQueue() {
+    if (this.taskQueue.length === 0) return;
+    const idleWorker = this.workers.find(w => !w.isBusy);
+    if (idleWorker) {
+      const task = this.taskQueue.shift();
+      idleWorker.isBusy = true;
+      idleWorker.postMessage(task);
+    }
   }
 
   generate() {
-    if (this.isGenerating) return;
     this.isGenerating = true;
-    this.initWorker();
-    this.worker.postMessage({ type: 'GENERATE_PUZZLE' });
+    this.initPool();
+    this.taskQueue.push({ type: 'GENERATE_PUZZLE' });
+    this.processQueue();
   }
 
-  evaluate(fen, depth = 14) {
-    this.initWorker();
-    this.isGenerating = false;
-    this.worker.postMessage({ type: 'EVALUATE', fen: fen, depth: depth });
+  evaluate(fen, depth = 14, taskId = null) {
+    this.initPool();
+    // Live eval bar takes priority - clear queue if it's a live eval
+    if (taskId === 'live') {
+      this.taskQueue = this.taskQueue.filter(t => t.type !== 'EVALUATE');
+      this.taskQueue.unshift({ type: 'EVALUATE', fen, depth, taskId });
+    } else {
+      this.taskQueue.push({ type: 'BATCH_TASK', fen, depth, taskId });
+    }
+    this.processQueue();
   }
 }
 
 // UI Integration
-const engineWorker = new EngineWorker();
+const enginePool = new EnginePool();
 let puzzleSolution = [];
 let currentPuzzleStep = 0;
 
 function startOfflinePuzzle() {
-  document.getElementById('btn-generate-puzzle').innerText = "⏳ Generating... (May take a few seconds)";
+  document.getElementById('btn-generate-puzzle').innerText = "⏳ Generating... (Parallel Optimized)";
   
-  engineWorker.onPuzzleFound = (fen, solution) => {
+  enginePool.onPuzzleFound = (fen, solution) => {
     document.getElementById('btn-generate-puzzle').innerText = "🧩 Generate Offline Puzzle";
-    
     gameMode = 'puzzle';
     puzzleSolution = solution; 
     currentPuzzleStep = 0;
-    
     game.load(fen);
-    
     playerColor = game.turn();
     boardFlipped = (playerColor === 'b');
-    
     updateBoard();
     triggerEvaluation();
     document.getElementById('game-info-panel').innerText = "Puzzle Mode: Find the best move!";
     closeWelcomeScreen();
   };
 
-  engineWorker.generate();
+  enginePool.generate();
 }
 </script>
