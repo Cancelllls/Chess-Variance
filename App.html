@@ -209,6 +209,9 @@ function updateBoard() {
     });
 
     sq.classList.remove('highlight', 'last-move', 'in-check');
+    sq.classList.remove('anno-best', 'anno-good', 'anno-inaccuracy', 'anno-mistake', 'anno-blunder');
+    const oldTag = sq.querySelector('.move-classification-tag');
+    if (oldTag) oldTag.remove();
   });
 
   if (game.in_check()) {
@@ -223,12 +226,24 @@ function updateBoard() {
     });
   }
 
+  if (game.game_over()) {
+    document.getElementById('btnReview').classList.remove('hidden');
+    document.getElementById('btnUndo').classList.add('hidden');
+  } else {
+    document.getElementById('btnReview').classList.add('hidden');
+    if (gameMode !== 'analysis') document.getElementById('btnUndo').classList.remove('hidden');
+  }
+
   updateMoveList();
+  if (gameMode !== 'online' && gameMode !== 'analysis' && gameMode !== 'idle') {
+    triggerEvaluation();
+  }
 }
 
 // --- INTERACTION ---
 
 function handleSquareClick(e) {
+  if (gameMode === 'analysis') return;
   if (gameMode !== 'local' && game.turn() !== playerColor) return;
   
   const sq = e.currentTarget.dataset.square;
@@ -247,6 +262,7 @@ function handleSquareClick(e) {
 }
 
 function handleDragStart(e) {
+  if (gameMode === 'analysis') { e.preventDefault(); return; }
   if (gameMode !== 'local' && game.turn() !== playerColor) {
     e.preventDefault();
     return;
@@ -498,6 +514,234 @@ document.addEventListener('keydown', e => {
   }
   if (e.key === 'f') { boardFlipped = !boardFlipped; updateBoard(); }
 });
+
+// --- EVALUATION BAR LOGIC ---
+
+function triggerEvaluation(depth = 10) {
+  if (gameMode === 'online') return; // Eval disabled in online mode to save bandwidth
+  engineWorker.onEvalResult = updateEvalBar;
+  engineWorker.evaluate(game.fen(), depth);
+}
+
+function updateEvalBar(cp, mate) {
+  const fillEl = document.getElementById('eval-bar-fill');
+  const textEl = document.getElementById('eval-bar-text');
+  if (!fillEl || !textEl) return;
+
+  let absoluteCp = cp;
+  if (game.turn() === 'b') absoluteCp = -cp;
+  
+  let absoluteMate = mate;
+  if (mate !== null && game.turn() === 'b') absoluteMate = -mate;
+
+  let text = '';
+  let percentage = 50;
+
+  if (absoluteMate !== null) {
+    text = (absoluteMate > 0 ? '+' : '-') + 'M' + Math.abs(absoluteMate);
+    percentage = absoluteMate > 0 ? 100 : 0;
+  } else {
+    // Professional Sigmoid: 100 / (1 + exp(-cp/200))
+    // This makes the center of the bar more sensitive and the ends more compressed.
+    percentage = 100 / (1 + Math.exp(-absoluteCp / 200));
+    
+    let evalText = (absoluteCp / 100).toFixed(1);
+    if (absoluteCp > 0) evalText = '+' + evalText;
+    text = evalText;
+  }
+
+  // Adjust for orientation
+  if (boardFlipped) {
+    fillEl.style.height = (100 - percentage) + '%';
+    document.getElementById('eval-bar-container').style.transform = 'rotate(180deg)';
+    textEl.style.transform = 'translateY(-50%) rotate(180deg)';
+  } else {
+    fillEl.style.height = percentage + '%';
+    document.getElementById('eval-bar-container').style.transform = '';
+    textEl.style.transform = 'translateY(-50%)';
+  }
+
+  textEl.innerText = text;
+}
+
+// --- POST-GAME ANALYSIS MODE ---
+
+let analysisHistory = [];
+let analysisIndex = -1;
+let fullGameAnalysis = []; // Stores { fen, move, eval, cpl, classification }
+
+async function startAnalysisMode() {
+  gameMode = 'analysis';
+  analysisHistory = game.history({ verbose: true });
+  analysisIndex = analysisHistory.length - 1;
+  
+  document.getElementById('main-controls').classList.add('hidden');
+  document.getElementById('analysis-controls').classList.remove('hidden');
+  document.getElementById('game-info-panel').innerText = "Analyzing Game...";
+  
+  // Show report section (initially empty/loading)
+  document.getElementById('analysis-report').classList.remove('hidden');
+  resetReportUI();
+
+  await runFullGameAnalysis();
+  
+  updateBoard();
+  triggerEvaluation(16); // High depth for current position
+}
+
+function resetReportUI() {
+  document.getElementById('white-elo').innerText = "---";
+  document.getElementById('black-elo').innerText = "---";
+  document.getElementById('white-acc').innerText = "0%";
+  document.getElementById('black-acc').innerText = "0%";
+  document.getElementById('move-tally').innerHTML = '';
+}
+
+async function runFullGameAnalysis() {
+  fullGameAnalysis = [];
+  const history = game.history({ verbose: true });
+  const tempGame = new Chess();
+  
+  // We need evals for all positions: start + after every move
+  const fensToEval = [tempGame.fen()];
+  for (let move of history) {
+    tempGame.move(move);
+    fensToEval.push(tempGame.fen());
+  }
+
+  const evals = [];
+  for (let i = 0; i < fensToEval.length; i++) {
+    const res = await new Promise(resolve => {
+      engineWorker.onEvalResult = (cp, mate) => resolve({ cp, mate });
+      engineWorker.evaluate(fensToEval[i], 12);
+    });
+    evals.push(res);
+  }
+
+  // Calculate CPL and Classify
+  let whiteCPLs = [];
+  let blackCPLs = [];
+  let tallies = { best: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0 };
+
+  for (let i = 0; i < history.length; i++) {
+    const prevEval = evals[i];
+    const currEval = evals[i+1];
+    const turn = i % 2 === 0 ? 'w' : 'b';
+
+    let cpl = calculateCPL(prevEval, currEval, turn);
+    let classification = classifyMove(cpl);
+    
+    if (turn === 'w') whiteCPLs.push(cpl);
+    else blackCPLs.push(cpl);
+    
+    tallies[classification.toLowerCase()]++;
+    
+    fullGameAnalysis.push({
+      move: history[i],
+      eval: currEval,
+      cpl: cpl,
+      classification: classification
+    });
+  }
+
+  displayAnalysisReport(whiteCPLs, blackCPLs, tallies);
+  document.getElementById('game-info-panel').innerText = "Analysis Mode";
+}
+
+function calculateCPL(prev, curr, turn) {
+  let p = prev.cp;
+  if (prev.mate !== null) p = prev.mate > 0 ? 10000 : -10000;
+  
+  let c = curr.cp;
+  if (curr.mate !== null) c = curr.mate > 0 ? 10000 : -10000;
+
+  // CPL = Eval before move - Eval after move (from perspective of player who moved)
+  // If turn is White, positive eval is good. CPL = p - c
+  // If turn is Black, negative eval is good. CPL = (-p) - (-c) = c - p
+  let cpl = turn === 'w' ? (p - c) : (c - p);
+  return Math.max(0, cpl);
+}
+
+function classifyMove(cpl) {
+  if (cpl < 20) return "Best";
+  if (cpl <= 50) return "Good";
+  if (cpl <= 100) return "Inaccuracy";
+  if (cpl <= 250) return "Mistake";
+  return "Blunder";
+}
+
+function displayAnalysisReport(wLabels, bLabels, tallies) {
+  const acplW = wLabels.reduce((a,b) => a+b, 0) / (wLabels.length || 1);
+  const acplB = bLabels.reduce((a,b) => a+b, 0) / (bLabels.length || 1);
+
+  const eloW = estimateElo(acplW);
+  const eloB = estimateElo(acplB);
+
+  document.getElementById('white-elo').innerText = eloW;
+  document.getElementById('black-elo').innerText = eloB;
+  document.getElementById('white-acc').innerText = Math.round(Math.max(0, 100 - acplW/2)) + "%";
+  document.getElementById('black-acc').innerText = Math.round(Math.max(0, 100 - acplB/2)) + "%";
+
+  const tallyContainer = document.getElementById('move-tally');
+  tallyContainer.innerHTML = `
+    <div class="tally-item" style="border-left: 3px solid #00f3ff"><span>Best</span> <b>${tallies.best}</b></div>
+    <div class="tally-item" style="border-left: 3px solid #00ff41"><span>Good</span> <b>${tallies.good}</b></div>
+    <div class="tally-item" style="border-left: 3px solid #ffff00"><span>Inacc</span> <b>${tallies.inaccuracy}</b></div>
+    <div class="tally-item" style="border-left: 3px solid #ffaa00"><span>Mistake</span> <b>${tallies.mistake}</b></div>
+    <div class="tally-item" style="border-left: 3px solid #ff0000"><span>Blunder</span> <b>${tallies.blunder}</b></div>
+  `;
+}
+
+function estimateElo(acpl) {
+  // Heuristic: Elo = 3000 - (acpl * 25)
+  let elo = 2900 - (acpl * 22);
+  return Math.max(400, Math.min(3000, Math.round(elo)));
+}
+
+function exitAnalysisMode() {
+  document.getElementById('analysis-controls').classList.add('hidden');
+  document.getElementById('analysis-report').classList.add('hidden');
+  document.getElementById('main-controls').classList.remove('hidden');
+  openWelcomeScreen();
+}
+
+function goToAnalysisStep(index) {
+  if (index < -1 || index >= analysisHistory.length) return;
+  analysisIndex = index;
+  
+  game.reset();
+  for (let i = 0; i <= index; i++) {
+    game.move(analysisHistory[i]);
+  }
+  
+  updateBoard();
+  
+  // Highlight the move classification if available
+  if (index >= 0 && fullGameAnalysis[index]) {
+    const move = fullGameAnalysis[index].move;
+    const classification = fullGameAnalysis[index].classification.toLowerCase();
+    
+    const fromSq = boardEl.querySelector(`[data-square="${move.from}"]`);
+    const toSq = boardEl.querySelector(`[data-square="${move.to}"]`);
+    
+    if (fromSq && toSq) {
+      fromSq.classList.add('anno-' + classification);
+      toSq.classList.add('anno-' + classification);
+      
+      const tag = document.createElement('div');
+      tag.className = `move-classification-tag tag-${classification}`;
+      tag.innerText = classification;
+      toSq.appendChild(tag);
+    }
+  }
+
+  triggerEvaluation(16);
+}
+
+document.getElementById('btnReview').addEventListener('click', startAnalysisMode);
+document.getElementById('btnPrevMove').addEventListener('click', () => goToAnalysisStep(analysisIndex - 1));
+document.getElementById('btnNextMove').addEventListener('click', () => goToAnalysisStep(analysisIndex + 1));
+document.getElementById('btnExitAnalysis').addEventListener('click', exitAnalysisMode);
 
 // START
 document.addEventListener('DOMContentLoaded', () => {

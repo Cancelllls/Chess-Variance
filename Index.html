@@ -46,12 +46,45 @@
   <!-- MAIN APP -->
   <div class="app-container" id="main-app" style="filter: blur(5px); pointer-events: none;">
     <div class="board-container">
+      <div id="eval-bar-container" class="eval-bar-container">
+        <div id="eval-bar-fill" class="eval-bar-fill"></div>
+        <div id="eval-bar-text" class="eval-bar-text">0.0</div>
+      </div>
       <div id="board" aria-label="Chess board"></div>
     </div>
     <div class="sidebar">
       <div id="game-info-panel" style="text-align: center; font-weight: bold; color: var(--accent); font-size: 18px;"></div>
-      <div class="controls">
+      <div id="analysis-controls" class="controls hidden" style="margin-bottom: 10px;">
+        <button id="btnPrevMove" style="grid-column: span 1;">⬅️ Prev</button>
+        <button id="btnNextMove" style="grid-column: span 1;">Next ➡️</button>
+        <button id="btnExitAnalysis" style="grid-column: span 2; background: #c0392b;">Exit Analysis</button>
+      </div>
+
+      <div id="analysis-report" class="analysis-report hidden">
+        <h3>Game Report</h3>
+        <div class="bento-grid">
+          <div class="bento-item elo-card">
+            <div class="player-label">WHITE</div>
+            <div id="white-elo" class="elo-val">---</div>
+            <div class="accuracy-label">Accuracy: <span id="white-acc">0%</span></div>
+          </div>
+          <div class="bento-item elo-card">
+            <div class="player-label">BLACK</div>
+            <div id="black-elo" class="elo-val">---</div>
+            <div class="accuracy-label">Accuracy: <span id="black-acc">0%</span></div>
+          </div>
+          <div class="bento-item tally-card">
+            <h4>Move Breakdown</h4>
+            <div id="move-tally" class="tally-grid">
+               <!-- Tallies will be injected here -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="controls" id="main-controls">
         <button id="btnMenu" style="grid-column: span 2; background: #c0392b;">Quit to Menu</button>
+        <button id="btnReview" class="hidden" style="grid-column: span 2; background: var(--accent);">🔍 Review Game</button>
         <button id="btnUndo">Undo Move (u)</button>
         <button id="btnFlip">Flip Board (f)</button>
         <button id="btnTheme" style="grid-column: span 2;">Toggle Theme</button>
@@ -82,7 +115,7 @@
   <?!= include('Stockfish'); ?>
   <?!= include('Engine'); ?>
   <?!= include('AI'); ?>
-  <?!= include('App'); ?>
   <?!= include('PuzzleGen'); ?>
+  <?!= include('App'); ?>
 </body>
 </html>
