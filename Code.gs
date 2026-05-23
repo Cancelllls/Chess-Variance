@@ -1,7 +1,7 @@
 function doGet() {
   return HtmlService.createTemplateFromFile('Index')
     .evaluate()
-    .setTitle('Offline Chess')
+    .setTitle('Chess Pro - GAS')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
@@ -30,7 +30,7 @@ function loadGame() {
 
 // ---- Online Multiplayer Backend Functions ----
 
-function createRoom() {
+function createRoom(playerName) {
   var roomId = '';
   var characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   for (var i = 0; i < 4; i++) {
@@ -40,13 +40,19 @@ function createRoom() {
     fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
     takebackRequest: null,
     drawOffer: null,
-    gameOver: null
+    gameOver: null,
+    whitePlayer: playerName || "White",
+    blackPlayer: null,
+    whiteTime: 300000,
+    blackTime: 300000,
+    lastMoveTimestamp: Date.now(),
+    timeControl: 300000
   };
   CacheService.getScriptCache().put('chess_state_' + roomId, JSON.stringify(state), 21600);
   return roomId;
 }
 
-function getGameState(gameId) {
+function getGameState(gameId, playerName) {
   try {
     var cache = CacheService.getScriptCache();
     var cachedData = cache.get('chess_state_' + gameId);
@@ -72,20 +78,25 @@ function getGameState(gameId) {
       return { success: false, error: "ROOM_NOT_FOUND" };
     }
     
-    try {
-      state = JSON.parse(cachedData);
-      if (state.drawOffer === undefined) state.drawOffer = null;
-      if (state.gameOver === undefined) state.gameOver = null;
-    } catch(e) {
-      state = { fen: cachedData, takebackRequest: null, drawOffer: null, gameOver: null }; 
+    state = JSON.parse(cachedData);
+    
+    // Spectator and Player Logic
+    var role = "spectator";
+    if (state.whitePlayer === playerName) role = "w";
+    else if (state.blackPlayer === playerName) role = "b";
+    else if (!state.blackPlayer && playerName) {
+      state.blackPlayer = playerName;
+      role = "b";
+      cache.put('chess_state_' + gameId, JSON.stringify(state), 21600);
     }
-    return { success: true, data: state };
+    
+    return { success: true, data: state, role: role };
   } catch(e) {
     return { success: false, error: "CACHE_ERROR", message: e.toString() };
   }
 }
 
-function makeMove(gameId, fenString, isGameOver, moveCount) {
+function makeMove(gameId, fenString, isGameOver, moveCount, playerColor) {
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000);
@@ -96,18 +107,46 @@ function makeMove(gameId, fenString, isGameOver, moveCount) {
     
     if (state.gameOver) return { success: false, error: "GAME_ALREADY_OVER" };
 
+    // Update Clocks
+    var now = Date.now();
+    var elapsed = now - state.lastMoveTimestamp;
+    if (playerColor === 'w') {
+      state.whiteTime -= elapsed;
+      if (state.whiteTime <= 0) {
+        state.whiteTime = 0;
+        state.gameOver = { result: "0-1", reason: "White flagged (Timeout)" };
+      }
+    } else {
+      state.blackTime -= elapsed;
+      if (state.blackTime <= 0) {
+        state.blackTime = 0;
+        state.gameOver = { result: "1-0", reason: "Black flagged (Timeout)" };
+      }
+    }
+    state.lastMoveTimestamp = now;
+
     state.fen = fenString;
     state.takebackRequest = null;
-    state.drawOffer = null; // Implicitly decline draw on move
+    state.drawOffer = null;
     
+    if (isGameOver && !state.gameOver) {
+       // Checkmate or Draw from client validation
+       var parts = fenString.split(' ');
+       var result = "1/2-1/2";
+       var reason = "Draw";
+       // Simple result detection from FEN isn't enough, we rely on isGameOver flag
+       state.gameOver = { result: "Game Over", reason: "Terminated" };
+    }
+
     CacheService.getScriptCache().put('chess_state_' + gameId, JSON.stringify(state), 21600);
     
-    isGameOver = isGameOver || false;
-    moveCount = moveCount || 0;
-    
-    if (isGameOver || (moveCount > 0 && moveCount % 10 === 0)) {
+    if (state.gameOver) {
+      updateLeaderboard(state.whitePlayer, state.blackPlayer, state.gameOver.result);
+      writeToSheet(gameId, fenString, state.gameOver.result + ": " + state.gameOver.reason);
+    } else if (moveCount > 0 && moveCount % 10 === 0) {
       writeToSheet(gameId, fenString);
     }
+    
     return { success: true };
   } catch(e) {
     return { success: false, error: "LOCK_TIMEOUT", message: "Server busy." };
@@ -144,6 +183,7 @@ function resolveDraw(gameId, isAccepted) {
     state.drawOffer = null;
     if (isAccepted) {
       state.gameOver = { result: "1/2-1/2", reason: "Mutual Agreement" };
+      updateLeaderboard(state.whitePlayer, state.blackPlayer, "1/2-1/2");
       writeToSheet(gameId, state.fen, "1/2-1/2: Mutual Agreement");
     }
     CacheService.getScriptCache().put('chess_state_' + gameId, JSON.stringify(state), 21600);
@@ -167,6 +207,7 @@ function resignGame(gameId, resigningColor) {
     var result = resigningColor === 'w' ? '0-1' : '1-0';
     state.gameOver = { result: result, reason: winner + " won by Resignation" };
     
+    updateLeaderboard(state.whitePlayer, state.blackPlayer, result);
     writeToSheet(gameId, state.fen, result + ": " + state.gameOver.reason);
     CacheService.getScriptCache().put('chess_state_' + gameId, JSON.stringify(state), 21600);
     return { success: true };
@@ -243,4 +284,73 @@ function writeToSheet(gameId, fen, note) {
   } catch(e) {
     console.warn("Sheet write failed: " + e);
   }
+}
+
+// --- LEADERBOARD & ELO LOGIC ---
+
+function getLeaderboard() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName("Players");
+    if (!sheet) return [];
+    var data = sheet.getDataRange().getValues();
+    var players = [];
+    for (var i = 1; i < data.length; i++) {
+      players.push({
+        name: data[i][0],
+        elo: data[i][1],
+        wins: data[i][2],
+        losses: data[i][3],
+        draws: data[i][4]
+      });
+    }
+    players.sort((a, b) => b.elo - a.elo);
+    return players.slice(0, 15);
+  } catch(e) {
+    return [];
+  }
+}
+
+function updateLeaderboard(whiteName, blackName, result) {
+  if (!whiteName || !blackName) return;
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Players");
+  if (!sheet) {
+    sheet = ss.insertSheet("Players");
+    sheet.appendRow(["Name", "Elo", "Wins", "Losses", "Draws"]);
+  }
+  
+  var data = sheet.getDataRange().getValues();
+  var whiteRow = -1, blackRow = -1;
+  var whiteElo = 1200, blackElo = 1200;
+  var wW = 0, wL = 0, wD = 0;
+  var bW = 0, bL = 0, bD = 0;
+
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] === whiteName) { 
+      whiteRow = i + 1; whiteElo = data[i][1]; 
+      wW = data[i][2]; wL = data[i][3]; wD = data[i][4];
+    }
+    if (data[i][0] === blackName) { 
+      blackRow = i + 1; blackElo = data[i][1]; 
+      bW = data[i][2]; bL = data[i][3]; bD = data[i][4];
+    }
+  }
+
+  if (whiteRow === -1) { sheet.appendRow([whiteName, 1200, 0, 0, 0]); whiteRow = sheet.getLastRow(); }
+  if (blackRow === -1) { sheet.appendRow([blackName, 1200, 0, 0, 0]); blackRow = sheet.getLastRow(); }
+
+  var scoreW = 0.5, scoreB = 0.5;
+  if (result === "1-0") { scoreW = 1; scoreB = 0; wW++; bL++; }
+  else if (result === "0-1") { scoreW = 0; scoreB = 1; wL++; bW++; }
+  else { wD++; bD++; }
+
+  var expectedW = 1 / (1 + Math.pow(10, (blackElo - whiteElo) / 400));
+  var expectedB = 1 / (1 + Math.pow(10, (whiteElo - blackElo) / 400));
+  
+  var newW = Math.round(whiteElo + 32 * (scoreW - expectedW));
+  var newB = Math.round(blackElo + 32 * (scoreB - expectedB));
+
+  sheet.getRange(whiteRow, 2, 1, 4).setValues([[newW, wW, wL, wD]]);
+  sheet.getRange(blackRow, 2, 1, 4).setValues([[newB, bW, bL, bD]]);
 }

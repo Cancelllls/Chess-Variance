@@ -1,13 +1,17 @@
 # Serverless Google Apps Script Chess
 
-A high-performance, real-time multiplayer chess application built entirely on **Google Apps Script** (GAS) and HTML/JS. This project demonstrates how to leverage serverless architectures to create a responsive, production-grade web application with complex state synchronization.
+A professional-grade, high-performance, real-time multiplayer chess application built entirely on **Google Apps Script** (GAS) and HTML/JS. This project leverages serverless architectures to deliver a responsive, production-ready experience with advanced features typically reserved for major platforms.
 
 ---
 
 ## ✨ Advanced Features
 
-- **🌐 Lightning-Fast Multiplayer:** Real-time play powered by Google Apps Script `CacheService` and `LockService`. Achieves sub-50ms synchronization to bypass traditional Google Sheets latency.
+- **🌐 Lightning-Fast Multiplayer:** Real-time play powered by GAS `CacheService` and `LockService`. Achieves sub-50ms synchronization to bypass traditional Google Sheets latency.
 - **🎨 Pro UI/UX (Chess.com Style):** A pixel-perfect dark mode interface featuring tactile 3D buttons, a responsive split-pane layout, and the classic green/cream board aesthetic.
+- **⏱️ Server-Authoritative Time Controls:** Professional digital clocks for White and Black with server-side time calculation and automatic flagging (timeouts).
+- **🏆 Persistent Office Leaderboard:** A persistent ELO rating system stored in Google Sheets. Compete with colleagues and track wins, losses, and draws.
+- **👁️ Spectator Mode:** Join any active room as a spectator to watch games live. Supports an unlimited number of viewers per room.
+- **🔊 100% Offline Audio Feedback:** Instant audio cues for moves, captures, checks, and game ends, synthesized locally via the Web Audio API for a self-contained experience.
 - **⚡ High-Performance Engine Pool:** A multi-threaded background analysis system using a pool of **WASM Stockfish** workers. Detects your CPU core count to parallelize full-game reviews.
 - **🔍 Professional Review Suite:** 
     - **Move Classification:** Industry-standard badges for *Brilliant (!!)*, *Great (!)*, *Best (★)*, and *Blunders*.
@@ -18,19 +22,16 @@ A high-performance, real-time multiplayer chess application built entirely on **
     - **Exponential Backoff:** Intelligent polling logic that retries failed connections with increasing delays.
     - **Hard Sync:** Automated state reconciliation that fixes desynchronization without page refreshes.
     - **Connection Monitoring:** Live status indicators (Green/Yellow/Red) with an auto-locking board during instability.
-- **♟️ Advanced Gameplay:** 
-    - **Premove Queueing:** Plan moves during your opponent's turn.
-    - **Bidirectional Takebacks:** Undo moves with opponent approval.
-    - **Resign & Draw:** Explicit end-game controls with mutual handshake logic.
-    - **Right-Click Visualization:** High-speed drawing of Arrows & Circles for tactical planning.
+- **♟️ Advanced Gameplay:** Supports **Premove Queueing**, **Bidirectional Takebacks**, and **Right-Click Visualization** (Arrows & Circles).
 
 ---
 
 ## 🏗️ Architecture
 
-- **Backend (`Code.gs`)**: Uses `CacheService` as a high-speed, serverless real-time database. All state mutations are protected by `LockService` to prevent race conditions during simultaneous moves or takeback requests. Standardized JSON error handling ensures the client never receives raw HTML error pages.
-- **Frontend (`App.html`)**: Implements **Optimistic UI updates** (Client-side Prediction). Moves are rendered instantly on the local `chess.js` instance before being synchronized asynchronously with the server.
-- **Worker Pool (`PuzzleGen.html`)**: Manages a singleton pool of Stockfish.js workers, utilizing **WebAssembly** for near-native calculation speeds for both live evaluation and batch game processing.
+- **Backend (`Code.gs`)**: Uses `CacheService` as a high-speed database and `LockService` for atomicity. Standardized JSON error handling ensures stability.
+- **Persistent Data**: Google Sheets stores the "Players" leaderboard (Elo, W/L/D) and "ChessGames" history.
+- **Frontend (`App.html`)**: Implements **Optimistic UI updates** and local countdown timers synced with the server.
+- **Engine (`Stockfish WASM`)**: Runs in the background to provide deep analysis and real-time evaluation without blocking the UI.
 
 ---
 

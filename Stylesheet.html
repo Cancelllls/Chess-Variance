@@ -379,6 +379,39 @@ body {
     pointer-events: auto;
 }
 
+/* Clocks */
+.clocks-container {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 10px;
+}
+.clock {
+    background: #1a1a1a;
+    color: #fff;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 24px;
+    font-weight: bold;
+    padding: 8px 15px;
+    border-radius: 4px;
+    text-align: right;
+    border: 1px solid #333;
+}
+.clock.active {
+    background: #fff;
+    color: #000;
+}
+.clock.low-time {
+    color: #fa412d;
+}
+
+/* Leaderboard */
+#leaderboard-container th, #leaderboard-container td {
+    padding: 10px;
+    text-align: left;
+}
+#leaderboard-container tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+
 @media (max-width: 900px) {
   .app-container { flex-direction: column; align-items: center; }
   .sidebar { width: 100%; height: auto; }
