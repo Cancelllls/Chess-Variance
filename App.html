@@ -72,6 +72,9 @@ function startAIGame(color) {
 
 function createOnlineRoom() {
   document.getElementById('online-status').innerText = "Creating room...";
+  const undoBtn = document.getElementById('btnUndo');
+  undoBtn.innerText = "Undo";
+  undoBtn.disabled = false;
   try {
     google.script.run
       .withSuccessHandler(id => {
@@ -98,6 +101,9 @@ function joinOnlineRoom() {
   const id = document.getElementById('room-code-input').value.toUpperCase();
   if(id.length !== 4) return;
   document.getElementById('online-status').innerText = "Joining...";
+  const undoBtn = document.getElementById('btnUndo');
+  undoBtn.innerText = "Undo";
+  undoBtn.disabled = false;
   try {
     google.script.run
       .withSuccessHandler(state => {
@@ -139,14 +145,34 @@ function startPolling() {
     try {
       google.script.run
         .withSuccessHandler(state => {
-          if (state !== null && state !== game.fen() && state !== game.pgn()) {
-            if (state.indexOf('[') !== -1 || state.indexOf('1.') === 0) {
-              game.load_pgn(state);
+          if (!state) return;
+          
+          // --- TAKEBACK HANDSHAKE ---
+          const toast = document.getElementById('takeback-toast');
+          if (state.takebackRequest && state.takebackRequest !== playerColor) {
+            toast.classList.remove('hidden');
+          } else {
+            toast.classList.add('hidden');
+          }
+
+          if (state.fen !== game.fen() && state.fen !== game.pgn()) {
+            const isTakeback = (game.history().length > 0 && game.fen() !== state.fen); // Basic check
+            
+            if (state.fen.indexOf('[') !== -1 || state.fen.indexOf('1.') === 0) {
+              game.load_pgn(state.fen);
             } else {
-              game.load(state);
+              game.load(state.fen);
             }
             updateBoard();
             playSound('move');
+            
+            if (isTakeback) {
+              const undoBtn = document.getElementById('btnUndo');
+              if (undoBtn.innerText === "Takeback Proposed...") {
+                undoBtn.innerText = "Undo";
+                undoBtn.disabled = false;
+              }
+            }
 
             // --- PREMOVE EXECUTION ---
             if (pendingPremove && game.turn() === playerColor) {
@@ -273,7 +299,12 @@ function updateBoard() {
     document.getElementById('btnUndo').classList.add('hidden');
   } else {
     document.getElementById('btnReview').classList.add('hidden');
-    if (gameMode !== 'analysis') document.getElementById('btnUndo').classList.remove('hidden');
+    if (gameMode !== 'analysis') {
+      const undoBtn = document.getElementById('btnUndo');
+      undoBtn.classList.remove('hidden');
+      undoBtn.disabled = (game.history().length === 0);
+      undoBtn.style.opacity = (game.history().length === 0) ? '0.5' : '1';
+    }
   }
 
   updateMoveList();
@@ -452,6 +483,9 @@ function errorCallback(error) {
 }
 
 function attemptMove(from, to, promo = null) {
+  // Hide takeback toast if making a move
+  document.getElementById('takeback-toast').classList.add('hidden');
+  
   if (gameMode !== 'local' && game.turn() !== playerColor) return;
 
   const moves = game.moves({ verbose: true });
@@ -636,13 +670,41 @@ function playSound(type) {
 
 document.getElementById('btnMenu').addEventListener('click', openWelcomeScreen);
 
-document.getElementById('btnUndo').addEventListener('click', () => { 
-  if (gameMode === 'online') { alert('Undo disabled in online multiplayer.'); return; }
-  game.undo(); 
-  if (gameMode === 'ai') game.undo(); 
-  updateBoard(); 
+document.getElementById('btnUndo').addEventListener('click', () => {
+  if (gameMode === 'online') { 
+    if (game.history().length === 0) return;
+    const btn = document.getElementById('btnUndo');
+    btn.innerText = "Takeback Proposed...";
+    btn.disabled = true;
+    google.script.run
+      .withFailureHandler(() => {
+        btn.innerText = "Undo";
+        btn.disabled = false;
+      })
+      .requestTakeback(roomId, playerColor);
+    return; 
+  }
+  game.undo();
+  if (gameMode === 'ai') game.undo();
+  updateBoard();
 });
 
+document.getElementById('btnAcceptTakeback').addEventListener('click', () => {
+  game.undo();
+  updateBoard();
+  const revertedFen = game.fen();
+  document.getElementById('takeback-toast').classList.add('hidden');
+  google.script.run
+    .withFailureHandler(e => console.error("Takeback resolution failed:", e))
+    .resolveTakeback(roomId, true, revertedFen);
+});
+
+document.getElementById('btnDeclineTakeback').addEventListener('click', () => {
+  document.getElementById('takeback-toast').classList.add('hidden');
+  google.script.run
+    .withFailureHandler(e => console.error("Takeback resolution failed:", e))
+    .resolveTakeback(roomId, false, null);
+});
 document.getElementById('btnFlip').addEventListener('click', () => { 
   boardFlipped = !boardFlipped; 
   updateBoard(); 

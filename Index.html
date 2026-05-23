@@ -142,6 +142,17 @@
     </div>
   </div>
 
+  <!-- Takeback Request Toast -->
+  <div id="takeback-toast" class="hidden">
+    <div class="toast-content">
+      <p>Opponent requests a takeback.</p>
+      <div class="toast-buttons">
+        <button id="btnAcceptTakeback" class="btn-primary" style="background:#81b64c; border-color:#537731; font-size:12px;">Accept</button>
+        <button id="btnDeclineTakeback" class="btn-primary" style="background:#fa412d; border-color:#9e2a1e; font-size:12px;">Decline</button>
+      </div>
+    </div>
+  </div>
+
   <?!= include('Pieces'); ?>
   <?!= include('Stockfish'); ?>
   <?!= include('Engine'); ?>
