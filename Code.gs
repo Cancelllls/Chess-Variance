@@ -71,7 +71,7 @@ function getGameState(gameId, playerName) {
             var data = sheet.getDataRange().getValues();
             for (var i = 1; i < data.length; i++) {
               if (data[i][0] == gameId) {
-                state = { fen: data[i][1], takebackRequest: null, drawOffer: null, gameOver: null };
+                state = { fen: data[i][1], takebackRequest: null, drawOffer: null, gameOver: null, timeControl: null };
                 cache.put('chess_state_' + gameId, JSON.stringify(state), 21600);
                 return { success: true, data: state };
               }
@@ -114,7 +114,8 @@ function makeMove(gameId, fenString, isGameOver, moveCount, playerColor) {
     // Update Clocks if not Unlimited
     var now = Date.now();
     if (state.timeControl !== null) {
-      var elapsed = now - state.lastMoveTimestamp;
+      // 100ms Latency Compensation Buffer
+      var elapsed = Math.max(0, (now - state.lastMoveTimestamp) - 100);
       if (playerColor === 'w') {
         state.whiteTime -= elapsed;
         if (state.whiteTime <= 0) {
@@ -136,12 +137,15 @@ function makeMove(gameId, fenString, isGameOver, moveCount, playerColor) {
     state.drawOffer = null;
     
     if (isGameOver && !state.gameOver) {
-       // Checkmate or Draw from client validation
-       var parts = fenString.split(' ');
+       // Checkmate or Draw from client-side validation
+       var turn = fenString.split(' ')[1];
        var result = "1/2-1/2";
        var reason = "Draw";
-       // Simple result detection from FEN isn't enough, we rely on isGameOver flag
-       state.gameOver = { result: "Game Over", reason: "Terminated" };
+       
+       if (turn === 'b') { result = "1-0"; reason = "White won by Checkmate"; }
+       else { result = "0-1"; reason = "Black won by Checkmate"; }
+       
+       state.gameOver = { result: result, reason: reason };
     }
 
     CacheService.getScriptCache().put('chess_state_' + gameId, JSON.stringify(state), 21600);
@@ -254,6 +258,8 @@ function resolveTakeback(gameId, isAccepted, fallbackFen) {
     state.takebackRequest = null;
     if (isAccepted && fallbackFen) {
       state.fen = fallbackFen;
+      // Reset move timestamp so active player doesn't lose time during handshake
+      state.lastMoveTimestamp = Date.now();
     }
     CacheService.getScriptCache().put('chess_state_' + gameId, JSON.stringify(state), 21600);
     return { success: true };
