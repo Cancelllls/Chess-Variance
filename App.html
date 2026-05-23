@@ -1,0 +1,507 @@
+<script>
+// Game State
+let game = new Chess();
+let boardFlipped = false;
+let showCoords = true;
+let showHints = false;
+
+// Multiplayer & Mode State
+let gameMode = 'local'; // 'local', 'ai', 'online'
+let playerColor = 'w';
+let roomId = null;
+let pollInterval = null;
+let aiDepth = 2;
+
+// DOM Elements
+const boardEl = document.getElementById('board');
+const moveListEl = document.getElementById('move-list');
+const promoDialog = document.getElementById('promotion-dialog');
+let pendingMove = null;
+let selectedSquare = null;
+
+// --- WELCOME SCREEN LOGIC ---
+
+function showMenu(id) {
+  document.querySelectorAll('.menu-section').forEach(el => el.classList.add('hidden'));
+  document.getElementById(id).classList.remove('hidden');
+}
+
+function closeWelcomeScreen() {
+  document.getElementById('welcome-screen').classList.add('hidden');
+  document.getElementById('main-app').style.filter = 'none';
+  document.getElementById('main-app').style.pointerEvents = 'auto';
+}
+
+function openWelcomeScreen() {
+  if (pollInterval) clearInterval(pollInterval);
+  document.getElementById('welcome-screen').classList.remove('hidden');
+  document.getElementById('main-app').style.filter = 'blur(5px)';
+  document.getElementById('main-app').style.pointerEvents = 'none';
+  showMenu('menu-main');
+  roomId = null;
+}
+
+function startLocalMultiplayer() {
+  gameMode = 'local';
+  game.reset();
+  boardFlipped = false;
+  updateBoard();
+  document.getElementById('game-info-panel').innerText = "Local Pass & Play";
+  closeWelcomeScreen();
+}
+
+function startAIGame(color) {
+  gameMode = 'ai';
+  playerColor = color;
+  aiDepth = parseInt(document.getElementById('ai-diff-slider').value);
+  game.reset();
+  boardFlipped = (color === 'b');
+  updateBoard();
+  document.getElementById('game-info-panel').innerText = "Playing vs Computer";
+  closeWelcomeScreen();
+  if (color === 'b') setTimeout(makeAIMove, 250);
+}
+
+function createOnlineRoom() {
+  document.getElementById('online-status').innerText = "Creating room...";
+  try {
+    google.script.run.withSuccessHandler(id => {
+      roomId = id;
+      gameMode = 'online';
+      playerColor = 'w';
+      boardFlipped = false;
+      game.reset();
+      updateBoard();
+      document.getElementById('game-info-panel').innerText = "Room Code: " + roomId;
+      closeWelcomeScreen();
+      startPolling();
+    }).createRoom();
+  } catch(e) {
+    document.getElementById('online-status').innerText = "Error: Network / Apps Script not detected.";
+  }
+}
+
+function joinOnlineRoom() {
+  const id = document.getElementById('room-code-input').value.toUpperCase();
+  if(id.length !== 4) return;
+  document.getElementById('online-status').innerText = "Joining...";
+  try {
+    google.script.run.withSuccessHandler(state => {
+      if (state === null) {
+         document.getElementById('online-status').innerText = "Room not found.";
+         return;
+      }
+      roomId = id;
+      gameMode = 'online';
+      playerColor = 'b';
+      boardFlipped = true;
+      if (state) {
+        if (state.indexOf('[') !== -1 || state.indexOf('1.') === 0) {
+          game.load_pgn(state); // Fallback if old PGN format is returned
+        } else {
+          game.load(state); // Load FEN string
+        }
+      } else {
+        game.reset();
+      }
+      updateBoard();
+      document.getElementById('game-info-panel').innerText = "Room Code: " + roomId;
+      closeWelcomeScreen();
+      startPolling();
+    }).getGameState(id);
+  } catch(e) {
+    document.getElementById('online-status').innerText = "Error: Network / Apps Script not detected.";
+  }
+}
+
+function startPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(() => {
+    if (gameMode !== 'online' || !roomId) return;
+    try {
+      google.script.run.withSuccessHandler(state => {
+        if (state !== null && state !== game.fen() && state !== game.pgn()) {
+          if (state.indexOf('[') !== -1 || state.indexOf('1.') === 0) {
+            game.load_pgn(state);
+          } else {
+            game.load(state);
+          }
+          updateBoard();
+          playSound('move');
+        }
+      }).getGameState(roomId);
+    } catch(e){}
+  }, 1000);
+}
+
+// --- BOARD LOGIC (OPTIMIZED DOM UPDATES) ---
+
+function initBoard() {
+  boardEl.innerHTML = '';
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const square = document.createElement('div');
+      square.className = `square ${(r + c) % 2 === 0 ? 'light' : 'dark'}`;
+      square.dataset.row = r;
+      square.dataset.col = c;
+      square.dataset.square = String.fromCharCode(97 + c) + (8 - r);
+      square.setAttribute('aria-label', square.dataset.square);
+      
+      if (c === 0) {
+        const rank = document.createElement('span');
+        rank.className = 'coord rank';
+        rank.innerText = 8 - r;
+        square.appendChild(rank);
+      }
+      if (r === 7) {
+        const file = document.createElement('span');
+        file.className = 'coord file';
+        file.innerText = String.fromCharCode(97 + c);
+        square.appendChild(file);
+      }
+      
+      square.addEventListener('click', handleSquareClick);
+      square.addEventListener('dragover', e => e.preventDefault());
+      square.addEventListener('drop', handleDrop);
+      
+      boardEl.appendChild(square);
+    }
+  }
+  updateBoard();
+}
+
+function updateBoard() {
+  const b = game.board();
+  const squares = boardEl.querySelectorAll('.square');
+  
+  boardEl.style.transform = boardFlipped ? 'rotate(180deg)' : '';
+  
+  squares.forEach(sq => {
+    const r = parseInt(sq.dataset.row);
+    const c = parseInt(sq.dataset.col);
+    const piece = b[r][c];
+    
+    let existingPiece = sq.querySelector('.piece');
+    let targetClass = piece ? `piece ${piece.color}${piece.type.toUpperCase()}` : '';
+    
+    if (piece) {
+      if (!existingPiece) {
+        existingPiece = document.createElement('div');
+        existingPiece.draggable = true;
+        existingPiece.addEventListener('dragstart', handleDragStart);
+        sq.appendChild(existingPiece);
+      }
+      if (existingPiece.className !== targetClass) {
+        existingPiece.className = targetClass;
+        const imgKey = piece.color + piece.type.toUpperCase();
+        existingPiece.style.backgroundImage = pieceImages[imgKey] ? `url("${pieceImages[imgKey]}")` : 'none';
+      }
+      existingPiece.dataset.square = sq.dataset.square;
+      existingPiece.style.transform = boardFlipped ? 'rotate(180deg)' : '';
+    } else {
+      if (existingPiece) existingPiece.remove();
+    }
+    
+    const coords = sq.querySelectorAll('.coord');
+    coords.forEach(coord => {
+      coord.style.transform = boardFlipped ? 'rotate(180deg)' : '';
+      coord.style.display = showCoords ? 'block' : 'none';
+    });
+
+    sq.classList.remove('highlight', 'last-move', 'in-check');
+  });
+
+  if (game.in_check()) {
+    const kColor = game.turn();
+    squares.forEach(sq => {
+      const r = parseInt(sq.dataset.row);
+      const c = parseInt(sq.dataset.col);
+      const p = b[r][c];
+      if (p && p.type === 'k' && p.color === kColor) {
+        sq.classList.add('in-check');
+      }
+    });
+  }
+
+  updateMoveList();
+}
+
+// --- INTERACTION ---
+
+function handleSquareClick(e) {
+  if (gameMode !== 'local' && game.turn() !== playerColor) return;
+  
+  const sq = e.currentTarget.dataset.square;
+  if (selectedSquare) {
+    attemptMove(selectedSquare, sq);
+    selectedSquare = null;
+    clearHighlights();
+  } else {
+    const p = game.get(sq);
+    if (p && p.color === game.turn()) {
+      selectedSquare = sq;
+      highlightSquare(sq);
+      highlightLegalMoves(sq);
+    }
+  }
+}
+
+function handleDragStart(e) {
+  if (gameMode !== 'local' && game.turn() !== playerColor) {
+    e.preventDefault();
+    return;
+  }
+  selectedSquare = e.target.dataset.square;
+  e.dataTransfer.setData('text/plain', selectedSquare);
+  highlightLegalMoves(selectedSquare);
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  const from = e.dataTransfer.getData('text/plain');
+  let target = e.target;
+  if (target.classList.contains('piece')) target = target.parentElement;
+  const to = target.dataset.square;
+  if (from && to) attemptMove(from, to);
+  selectedSquare = null;
+  clearHighlights();
+}
+
+let previousFen = null;
+
+function errorCallback(error) {
+  if (previousFen) {
+    game.load(previousFen);
+    updateBoard();
+    alert("Network error: Move not saved. Reverting.");
+  }
+}
+
+function attemptMove(from, to, promo = null) {
+  if (gameMode !== 'local' && game.turn() !== playerColor) return;
+
+  const moves = game.moves({ verbose: true });
+  const move = moves.find(m => m.from === from && m.to === to);
+  
+  if (move) {
+    if (move.flags.includes('p') && !promo) {
+      pendingMove = { from, to };
+      showPromotionDialog();
+      return;
+    }
+    
+    // Step 1 & 2: Local Validation and Optimistic Update
+    previousFen = game.fen();
+    game.move({ from, to, promotion: promo || 'q' });
+    playSound('move');
+    updateBoard();
+    
+    if (gameMode === 'online') {
+      // Step 3: Async Sync with FEN
+      const currentFen = game.fen();
+      const isGameOver = game.game_over();
+      const moveCount = game.history().length;
+      try { 
+        // Step 4: Rollback Handling
+        google.script.run
+          .withFailureHandler(errorCallback)
+          .makeMove(roomId, currentFen, isGameOver, moveCount);
+      } catch(e) {
+        errorCallback(e);
+      }
+    } else if (gameMode === 'ai' && !game.game_over()) {
+      setTimeout(makeAIMove, 250);
+    } else if (gameMode === 'puzzle') {
+      const uciMove = from + to + (promo || '');
+      if (uciMove === puzzleSolution[currentPuzzleStep]) {
+        currentPuzzleStep++;
+        if (currentPuzzleStep >= puzzleSolution.length) {
+          setTimeout(() => alert('Puzzle solved!'), 100);
+        } else {
+          // Play the opponent's response
+          setTimeout(() => {
+            const oppMove = puzzleSolution[currentPuzzleStep];
+            game.move(oppMove, {sloppy: true});
+            playSound('move');
+            updateBoard();
+            currentPuzzleStep++;
+            if (currentPuzzleStep >= puzzleSolution.length) {
+              setTimeout(() => alert('Puzzle solved!'), 100);
+            }
+          }, 500);
+        }
+      } else {
+        setTimeout(() => alert('Incorrect move. Try again.'), 100);
+        game.undo();
+        updateBoard();
+      }
+    }
+
+    if (game.game_over() && gameMode !== 'puzzle') {
+      setTimeout(() => alert('Game Over!'), 100);
+    }
+  } else {
+    // Snap back immediately on invalid move
+    const fromEl = boardEl.querySelector(`[data-square="${from}"] .piece`);
+    if (fromEl) {
+      fromEl.classList.add('shake');
+      setTimeout(() => fromEl.classList.remove('shake'), 400);
+    }
+  }
+}
+
+function showPromotionDialog() {
+  promoDialog.classList.remove('hidden');
+}
+
+document.querySelectorAll('.promo-piece').forEach(el => {
+  el.addEventListener('click', function() {
+    const promo = this.dataset.piece;
+    promoDialog.classList.add('hidden');
+    if (pendingMove) {
+      attemptMove(pendingMove.from, pendingMove.to, promo);
+      pendingMove = null;
+    }
+  });
+});
+
+function makeAIMove() {
+  if (gameMode !== 'ai' || game.game_over()) return;
+  const m = getBestMove(game, aiDepth);
+  if (m) {
+    game.move(m);
+    playSound('move');
+    updateBoard();
+    if (game.game_over()) {
+      setTimeout(() => alert('Game Over!'), 100);
+    }
+  }
+}
+
+// --- UI HELPERS ---
+
+function highlightSquare(sq) {
+  const el = boardEl.querySelector(`[data-square="${sq}"]`);
+  if (el) el.classList.add('highlight');
+}
+
+function clearHighlights() {
+  boardEl.querySelectorAll('.square').forEach(sq => {
+    sq.classList.remove('highlight', 'legal-move');
+  });
+}
+
+function highlightLegalMoves(sq) {
+  const moves = game.moves({ square: sq, verbose: true });
+  moves.forEach(m => {
+    const el = boardEl.querySelector(`[data-square="${m.to}"]`);
+    if (el) el.classList.add('legal-move');
+  });
+}
+
+function updateMoveList() {
+  const history = game.history();
+  moveListEl.innerHTML = '';
+  let str = '';
+  for (let i = 0; i < history.length; i += 2) {
+    str += `<div class="move-row">
+      <span class="move-num">${(i/2)+1}.</span>
+      <span class="move-san" onclick="jumpTo(${i})">${history[i]}</span>
+      ${history[i+1] ? `<span class="move-san" onclick="jumpTo(${i+1})">${history[i+1]}</span>` : ''}
+    </div>`;
+  }
+  moveListEl.innerHTML = str;
+  moveListEl.scrollTop = moveListEl.scrollHeight;
+}
+
+function jumpTo(index) {
+  if (gameMode === 'online') {
+    alert("Time travel is disabled during live online matches.");
+    return;
+  }
+  const history = game.history();
+  game.reset();
+  for (let i = 0; i <= index; i++) {
+    game.move(history[i]);
+  }
+  updateBoard();
+}
+
+function playSound(type) {
+  // Add lightweight HTML5 audio synthesis for minimal sound if desired.
+}
+
+// --- BUTTON EVENTS ---
+
+document.getElementById('btnMenu').addEventListener('click', openWelcomeScreen);
+
+document.getElementById('btnUndo').addEventListener('click', () => { 
+  if (gameMode === 'online') { alert('Undo disabled in online multiplayer.'); return; }
+  game.undo(); 
+  if (gameMode === 'ai') game.undo(); 
+  updateBoard(); 
+});
+
+document.getElementById('btnFlip').addEventListener('click', () => { 
+  boardFlipped = !boardFlipped; 
+  updateBoard(); 
+});
+
+document.getElementById('btnTheme').addEventListener('click', () => {
+  document.body.classList.toggle('theme-light');
+  document.body.classList.toggle('theme-dark');
+});
+
+document.getElementById('btnSave').addEventListener('click', () => {
+  const pgn = game.pgn();
+  try {
+    google.script.run.withSuccessHandler(() => alert('Saved!')).saveGame(pgn);
+  } catch (e) {
+    localStorage.setItem('chess_save', pgn);
+    alert('Saved to local storage.');
+  }
+});
+
+document.getElementById('btnLoad').addEventListener('click', () => {
+  try {
+    google.script.run.withSuccessHandler(data => {
+      if (data) { game.load_pgn(data); updateBoard(); }
+    }).loadGame();
+  } catch (e) {
+    const data = localStorage.getItem('chess_save');
+    if (data) { game.load_pgn(data); updateBoard(); }
+  }
+});
+
+document.getElementById('btnExport').addEventListener('click', () => {
+  const blob = new Blob([game.pgn()], {type: "text/plain;charset=utf-8"});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'game.pgn';
+  a.click();
+});
+
+window.importPGN = function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    game.load_pgn(evt.target.result);
+    updateBoard();
+  };
+  reader.readAsText(file);
+};
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'u' && document.getElementById('welcome-screen').classList.contains('hidden')) { 
+      document.getElementById('btnUndo').click(); 
+  }
+  if (e.key === 'f') { boardFlipped = !boardFlipped; updateBoard(); }
+});
+
+// START
+document.addEventListener('DOMContentLoaded', () => {
+  initBoard();
+  document.getElementById('welcome-screen').classList.remove('hidden');
+});
+</script>

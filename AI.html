@@ -1,0 +1,96 @@
+<script>
+// Basic Minimax AI with Alpha-Beta Pruning
+const pieceValues = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 };
+// Simplistic PST (Piece-Square Tables) for positional evaluation
+const pst = {
+  p: [
+    [0,  0,  0,  0,  0,  0,  0,  0],
+    [50, 50, 50, 50, 50, 50, 50, 50],
+    [10, 10, 20, 30, 30, 20, 10, 10],
+    [5,  5, 10, 25, 25, 10,  5,  5],
+    [0,  0,  0, 20, 20,  0,  0,  0],
+    [5, -5,-10,  0,  0,-10, -5,  5],
+    [5, 10, 10,-20,-20, 10, 10,  5],
+    [0,  0,  0,  0,  0,  0,  0,  0]
+  ],
+  n: [
+    [-50,-40,-30,-30,-30,-30,-40,-50],
+    [-40,-20,  0,  0,  0,  0,-20,-40],
+    [-30,  0, 10, 15, 15, 10,  0,-30],
+    [-30,  5, 15, 20, 20, 15,  5,-30],
+    [-30,  0, 15, 20, 20, 15,  0,-30],
+    [-30,  5, 10, 15, 15, 10,  5,-30],
+    [-40,-20,  0,  5,  5,  0,-20,-40],
+    [-50,-40,-30,-30,-30,-30,-40,-50]
+  ]
+}; // Note: For brevity, applying generic fallbacks for other pieces in eval.
+
+function evaluateBoard(game, color) {
+  let score = 0;
+  const board = game.board();
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const piece = board[r][c];
+      if (piece) {
+        let val = pieceValues[piece.type] || 0;
+        let pstVal = pst[piece.type] ? pst[piece.type][piece.color === 'w' ? r : 7-r][c] : 0;
+        let pieceScore = val + pstVal;
+        if (piece.color === color) score += pieceScore;
+        else score -= pieceScore;
+      }
+    }
+  }
+  return score;
+}
+
+function minimax(game, depth, alpha, beta, isMaximizing, color) {
+  if (depth === 0 || game.game_over()) {
+    return evaluateBoard(game, color);
+  }
+  const moves = game.moves();
+  if (isMaximizing) {
+    let maxEval = -Infinity;
+    for (let i = 0; i < moves.length; i++) {
+      game.move(moves[i]);
+      let ev = minimax(game, depth - 1, alpha, beta, false, color);
+      game.undo();
+      maxEval = Math.max(maxEval, ev);
+      alpha = Math.max(alpha, ev);
+      if (beta <= alpha) break;
+    }
+    return maxEval;
+  } else {
+    let minEval = Infinity;
+    for (let i = 0; i < moves.length; i++) {
+      game.move(moves[i]);
+      let ev = minimax(game, depth - 1, alpha, beta, true, color);
+      game.undo();
+      minEval = Math.min(minEval, ev);
+      beta = Math.min(beta, ev);
+      if (beta <= alpha) break;
+    }
+    return minEval;
+  }
+}
+
+function getBestMove(game, depth = 2) {
+  const moves = game.moves();
+  let bestMove = null;
+  let bestValue = -Infinity;
+  const color = game.turn();
+  
+  // Sort moves to improve alpha-beta pruning (e.g., captures first)
+  moves.sort((a, b) => (a.includes('x') ? -1 : 1) - (b.includes('x') ? -1 : 1));
+
+  for (let i = 0; i < moves.length; i++) {
+    game.move(moves[i]);
+    let boardValue = minimax(game, depth - 1, -Infinity, Infinity, false, color);
+    game.undo();
+    if (boardValue > bestValue) {
+      bestValue = boardValue;
+      bestMove = moves[i];
+    }
+  }
+  return bestMove || moves[0];
+}
+</script>

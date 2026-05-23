@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Offline Chess</title>
+  <?!= include('Stylesheet'); ?>
+</head>
+<body class="theme-dark" data-piece-style="shadow">
+
+  <!-- WELCOME SCREEN -->
+  <div id="welcome-screen">
+    <div class="welcome-box">
+      <h1>Chess</h1>
+      <p>Select a game mode to begin.</p>
+      
+      <div id="menu-main" class="menu-section">
+        <button class="big-btn" onclick="showMenu('menu-ai')">🤖 Play vs Computer</button>
+        <button class="big-btn" onclick="startLocalMultiplayer()">🤝 Local Multiplayer</button>
+        <button class="big-btn" onclick="showMenu('menu-online')">🌐 Online Multiplayer</button>
+        <button class="big-btn" id="btn-generate-puzzle" onclick="startOfflinePuzzle()">🧩 Generate Offline Puzzle</button>
+      </div>
+
+      <div id="menu-ai" class="menu-section hidden">
+        <h3>Play vs Computer</h3>
+        <label style="color:#eee; font-weight:bold;">AI Difficulty: <input type="range" id="ai-diff-slider" min="1" max="4" value="2"></label>
+        <div class="controls" style="margin-top: 10px;">
+          <button onclick="startAIGame('w')">Play White</button>
+          <button onclick="startAIGame('b')">Play Black</button>
+        </div>
+        <button class="back-btn" style="margin-top:15px;" onclick="showMenu('menu-main')">Back</button>
+      </div>
+
+      <div id="menu-online" class="menu-section hidden">
+        <h3>Online Multiplayer</h3>
+        <p style="font-size:13px; color:#aaa;">Play with a friend over the internet using Google Apps Script.</p>
+        <button class="big-btn" style="background:var(--accent);" onclick="createOnlineRoom()">Create New Room</button>
+        <hr style="width:100%; border:0; border-top:1px solid #444; margin: 10px 0;">
+        <input type="text" id="room-code-input" placeholder="Enter 4-letter code" maxlength="4" style="padding:10px; text-align:center; font-size:18px; text-transform:uppercase; border-radius:4px; border:none;">
+        <button class="big-btn" onclick="joinOnlineRoom()">Join Room</button>
+        <p id="online-status" style="color:var(--accent); font-weight:bold; margin:5px 0;"></p>
+        <button class="back-btn" style="margin-top:10px;" onclick="showMenu('menu-main')">Back</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN APP -->
+  <div class="app-container" id="main-app" style="filter: blur(5px); pointer-events: none;">
+    <div class="board-container">
+      <div id="board" aria-label="Chess board"></div>
+    </div>
+    <div class="sidebar">
+      <div id="game-info-panel" style="text-align: center; font-weight: bold; color: var(--accent); font-size: 18px;"></div>
+      <div class="controls">
+        <button id="btnMenu" style="grid-column: span 2; background: #c0392b;">Quit to Menu</button>
+        <button id="btnUndo">Undo Move (u)</button>
+        <button id="btnFlip">Flip Board (f)</button>
+        <button id="btnTheme" style="grid-column: span 2;">Toggle Theme</button>
+        <hr>
+        <button id="btnSave">Save (Local)</button>
+        <button id="btnLoad">Load (Local)</button>
+        <button id="btnExport">Export PGN</button>
+        <button id="btnImport" onclick="document.getElementById('file-upload').click()">Import PGN</button>
+        <input type="file" id="file-upload" accept=".pgn,text/plain" style="display:none" onchange="importPGN(event)" />
+      </div>
+      <div class="move-list-container">
+        <h3>Moves</h3>
+        <div id="move-list"></div>
+      </div>
+    </div>
+  </div>
+  
+  <div id="promotion-dialog" class="hidden">
+    <div class="promo-content">
+      <div class="promo-piece" data-piece="q"></div>
+      <div class="promo-piece" data-piece="r"></div>
+      <div class="promo-piece" data-piece="b"></div>
+      <div class="promo-piece" data-piece="n"></div>
+    </div>
+  </div>
+
+  <?!= include('Pieces'); ?>
+  <?!= include('Stockfish'); ?>
+  <?!= include('Engine'); ?>
+  <?!= include('AI'); ?>
+  <?!= include('App'); ?>
+  <?!= include('PuzzleGen'); ?>
+</body>
+</html>

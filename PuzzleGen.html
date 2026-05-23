@@ -1,0 +1,155 @@
+<script>
+class OfflinePuzzleGenerator {
+  constructor() {
+    this.worker = null;
+    this.onPuzzleFound = null;
+    this.isGenerating = false;
+  }
+
+  generate() {
+    if (this.isGenerating) return;
+    this.isGenerating = true;
+
+    if (this.worker) {
+      this.worker.terminate();
+    }
+
+    const chessCode = document.getElementById('chess-engine').innerText;
+    const stockfishCode = document.getElementById('stockfish-engine').innerText;
+
+    const workerScript = `
+      ${chessCode}
+      ${stockfishCode}
+
+      let stockfish = typeof STOCKFISH !== "undefined" ? STOCKFISH() : Stockfish();
+      
+      let game = new Chess();
+      let state = 'SEED'; // SEED, EVAL_INITIAL, EXTRACT_MOVE
+      let solutionMoves = [];
+      let initialFen = '';
+      let extractionDepth = 0;
+      let lastEval = 0;
+
+      function randomMove() {
+        const moves = game.moves();
+        if(moves.length === 0) return false;
+        const move = moves[Math.floor(Math.random() * moves.length)];
+        game.move(move);
+        return true;
+      }
+
+      function generateRandomGame() {
+        game.reset();
+        const numMoves = 20 + Math.floor(Math.random() * 20); // 20 to 40 moves
+        for(let i=0; i<numMoves; i++) {
+          if(game.game_over()) break;
+          randomMove();
+        }
+        return game.fen();
+      }
+
+      stockfish.onmessage = function(event) {
+        const line = event.data || event;
+        
+        if (state === 'EVAL_INITIAL') {
+          if (line.startsWith('info depth')) {
+            const match = line.match(/score cp (-?\\d+)/);
+            if (match) lastEval = parseInt(match[1]);
+            const mateMatch = line.match(/score mate (-?\\d+)/);
+            if (mateMatch) lastEval = parseInt(mateMatch[1]) > 0 ? 10000 : -10000;
+          }
+          if (line.startsWith('bestmove')) {
+            // Check if position is tactical (jump in eval > 400 or mate)
+            if (Math.abs(lastEval) > 400 || Math.abs(lastEval) === 10000) {
+               const parts = line.split(' ');
+               if(parts.length > 1 && parts[1] !== '(none)') {
+                 solutionMoves.push(parts[1]);
+                 game.move(parts[1], {sloppy: true});
+                 extractionDepth = 1;
+                 state = 'EXTRACT_RESPONSE';
+                 stockfish.postMessage('position fen ' + game.fen());
+                 stockfish.postMessage('go depth 12');
+                 return;
+               }
+            }
+            // Retry
+            startGeneration();
+          }
+        } else if (state === 'EXTRACT_RESPONSE' || state === 'EXTRACT_MOVE') {
+            if (line.startsWith('bestmove')) {
+               const parts = line.split(' ');
+               if(parts.length > 1 && parts[1] !== '(none)') {
+                 solutionMoves.push(parts[1]);
+                 game.move(parts[1], {sloppy: true});
+                 if (extractionDepth < 3 && !game.game_over()) {
+                    extractionDepth++;
+                    state = state === 'EXTRACT_RESPONSE' ? 'EXTRACT_MOVE' : 'EXTRACT_RESPONSE';
+                    stockfish.postMessage('position fen ' + game.fen());
+                    stockfish.postMessage('go depth 12');
+                    return;
+                 }
+               }
+               postMessage({ type: 'PUZZLE_FOUND', fen: initialFen, solution: solutionMoves });
+            }
+        }
+      };
+
+      function startGeneration() {
+        state = 'SEED';
+        solutionMoves = [];
+        initialFen = generateRandomGame();
+        
+        state = 'EVAL_INITIAL';
+        stockfish.postMessage('position fen ' + initialFen);
+        stockfish.postMessage('go depth 12');
+      }
+
+      stockfish.postMessage('uci');
+      stockfish.postMessage('isready');
+      startGeneration();
+    `;
+
+    const blob = new Blob([workerScript], { type: 'application/javascript' });
+    this.worker = new Worker(URL.createObjectURL(blob));
+    
+    this.worker.onmessage = (e) => {
+      if (e.data && e.data.type === 'PUZZLE_FOUND') {
+        if (this.onPuzzleFound) {
+          this.onPuzzleFound(e.data.fen, e.data.solution);
+        }
+        this.isGenerating = false;
+        this.worker.terminate();
+        this.worker = null;
+      }
+    };
+  }
+}
+
+// UI Integration
+const puzzleGenerator = new OfflinePuzzleGenerator();
+let puzzleSolution = [];
+let currentPuzzleStep = 0;
+
+function startOfflinePuzzle() {
+  document.getElementById('btn-generate-puzzle').innerText = "⏳ Generating... (May take a few seconds)";
+  
+  puzzleGenerator.onPuzzleFound = (fen, solution) => {
+    document.getElementById('btn-generate-puzzle').innerText = "🧩 Generate Offline Puzzle";
+    
+    gameMode = 'puzzle';
+    puzzleSolution = solution; 
+    currentPuzzleStep = 0;
+    
+    game.load(fen);
+    
+    playerColor = game.turn();
+    boardFlipped = (playerColor === 'b');
+    
+    updateBoard();
+    document.getElementById('game-info-panel').innerText = "Puzzle Mode: Find the best move!";
+    closeWelcomeScreen();
+  };
+
+  puzzleGenerator.generate();
+}
+</script>
