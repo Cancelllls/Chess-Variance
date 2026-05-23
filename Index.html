@@ -2,117 +2,129 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Offline Chess</title>
+  <title>Chess.com Pro - GAS</title>
   <?!= include('Stylesheet'); ?>
 </head>
-<body class="theme-dark" data-piece-style="shadow">
+<body>
 
   <!-- WELCOME SCREEN -->
   <div id="welcome-screen">
     <div class="welcome-box">
       <h1>Chess</h1>
-      <p>Select a game mode to begin.</p>
       
       <div id="menu-main" class="menu-section">
-        <button class="big-btn" onclick="showMenu('menu-ai')">🤖 Play vs Computer</button>
-        <button class="big-btn" onclick="startLocalMultiplayer()">🤝 Local Multiplayer</button>
-        <button class="big-btn" onclick="showMenu('menu-online')">🌐 Online Multiplayer</button>
-        <button class="big-btn" id="btn-generate-puzzle" onclick="startOfflinePuzzle()">🧩 Generate Offline Puzzle</button>
+        <button class="btn-primary" style="width:100%; margin-bottom:12px;" onclick="showMenu('menu-ai')">🤖 Play Computer</button>
+        <button class="btn-primary" style="width:100%; margin-bottom:12px;" onclick="startLocalMultiplayer()">🤝 Pass & Play</button>
+        <button class="btn-primary" style="width:100%; margin-bottom:12px;" onclick="showMenu('menu-online')">🌐 Play Online</button>
+        <button class="btn-primary" style="width:100%; background-color:#333; border-color:#222;" id="btn-generate-puzzle" onclick="startOfflinePuzzle()">🧩 Puzzles</button>
       </div>
 
       <div id="menu-ai" class="menu-section hidden">
-        <h3>Play vs Computer</h3>
-        <label style="color:#eee; font-weight:bold;">AI Difficulty: <input type="range" id="ai-diff-slider" min="1" max="4" value="2"></label>
-        <div class="controls" style="margin-top: 10px;">
-          <button onclick="startAIGame('w')">Play White</button>
-          <button onclick="startAIGame('b')">Play Black</button>
+        <h3 style="color:var(--text-secondary)">Challenge AI</h3>
+        <div style="margin:20px 0;">
+          <label style="color:var(--text-secondary); font-weight:bold;">Strength: <input type="range" id="ai-diff-slider" min="1" max="4" value="2" style="width:100px; vertical-align:middle;"></label>
         </div>
-        <button class="back-btn" style="margin-top:15px;" onclick="showMenu('menu-main')">Back</button>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <button class="btn-primary" onclick="startAIGame('w')">White</button>
+          <button class="btn-primary" onclick="startAIGame('b')">Black</button>
+        </div>
+        <button class="back-btn" style="margin-top:20px; background:none; border:none; color:var(--text-secondary); cursor:pointer;" onclick="showMenu('menu-main')">← Back</button>
       </div>
 
       <div id="menu-online" class="menu-section hidden">
-        <h3>Online Multiplayer</h3>
-        <p style="font-size:13px; color:#aaa;">Play with a friend over the internet using Google Apps Script.</p>
-        <button class="big-btn" style="background:var(--accent);" onclick="createOnlineRoom()">Create New Room</button>
-        <hr style="width:100%; border:0; border-top:1px solid #444; margin: 10px 0;">
-        <input type="text" id="room-code-input" placeholder="Enter 4-letter code" maxlength="4" style="padding:10px; text-align:center; font-size:18px; text-transform:uppercase; border-radius:4px; border:none;">
-        <button class="big-btn" onclick="joinOnlineRoom()">Join Room</button>
-        <p id="online-status" style="color:var(--accent); font-weight:bold; margin:5px 0;"></p>
-        <button class="back-btn" style="margin-top:10px;" onclick="showMenu('menu-main')">Back</button>
+        <h3 style="color:var(--text-secondary)">Online Room</h3>
+        <button class="btn-primary" style="width:100%; margin-bottom:15px;" onclick="createOnlineRoom()">Create New</button>
+        <div style="display:flex; gap:5px; margin-bottom:15px;">
+           <input type="text" id="room-code-input" placeholder="CODE" maxlength="4" style="flex:1; background:#1a1a1a; border:1px solid #444; color:#fff; padding:10px; border-radius:4px; text-align:center; text-transform:uppercase;">
+           <button class="btn-primary" onclick="joinOnlineRoom()">Join</button>
+        </div>
+        <p id="online-status" style="color:var(--accent-green); font-size:12px;"></p>
+        <button class="back-btn" style="background:none; border:none; color:var(--text-secondary); cursor:pointer;" onclick="showMenu('menu-main')">← Back</button>
       </div>
     </div>
   </div>
 
-  <!-- MAIN APP -->
+  <!-- MAIN APP LAYOUT -->
   <div class="app-container" id="main-app" style="filter: blur(5px); pointer-events: none;">
+    
     <div class="board-container">
+      <!-- Eval Bar -->
       <div id="eval-bar-container" class="eval-bar-container">
         <div id="eval-bar-fill" class="eval-bar-fill"></div>
-        <div id="eval-bar-text" class="eval-bar-text">0.0</div>
+        <div id="eval-bar-text" class="eval-bar-text bottom">0.0</div>
       </div>
-      <div id="board" aria-label="Chess board"></div>
+      <!-- Chess Board -->
+      <div id="board"></div>
     </div>
+
+    <!-- SIDEBAR -->
     <div class="sidebar">
-      <div id="game-info-panel" style="text-align: center; font-weight: bold; color: var(--accent); font-size: 18px;"></div>
-      <div id="analysis-controls" class="controls hidden" style="margin-bottom: 10px;">
-        <button id="btnPrevMove" style="grid-column: span 1;">⬅️ Prev</button>
-        <button id="btnNextMove" style="grid-column: span 1;">Next ➡️</button>
-        <button id="btnExitAnalysis" style="grid-column: span 2; background: #c0392b;">Exit Analysis</button>
+      <div class="sidebar-header">
+        <div id="game-info-panel">New Game</div>
+        <div id="performance-metrics" style="font-size:9px; color:var(--text-secondary); margin-top:4px;">
+           <span id="thread-count">--</span> Threads | <span id="execution-time">0</span>ms
+        </div>
       </div>
 
-      <div id="analysis-report" class="analysis-report hidden">
-        <div class="report-header">
-          <h3>Game Report</h3>
-          <div id="performance-metrics" class="performance-metrics">
-            ⚡ <span id="thread-count">1</span> Threads | ⏱️ <span id="execution-time">0</span>ms
-          </div>
-        </div>
-        <div class="bento-grid">
-          <div class="bento-item elo-card">
-            <div class="player-label">WHITE</div>
-            <div id="white-elo" class="elo-val">---</div>
-            <div class="accuracy-label">Accuracy: <span id="white-acc">0%</span></div>
-          </div>
-          <div class="bento-item elo-card">
-            <div class="player-label">BLACK</div>
-            <div id="black-elo" class="elo-val">---</div>
-            <div class="accuracy-label">Accuracy: <span id="black-acc">0%</span></div>
-          </div>
-          <div class="bento-item tally-card">
-            <h4>Move Breakdown</h4>
-            <div id="move-tally" class="tally-grid">
-               <!-- Tallies will be injected here -->
+      <div class="scroll-container" id="sidebar-scroll">
+        <!-- Live Move List -->
+        <div id="move-list" class="move-list"></div>
+
+        <!-- Post-Game Report (Hidden by default) -->
+        <div id="analysis-report" class="analysis-report hidden">
+          <div class="accuracy-container">
+            <div class="accuracy-circle">
+               <svg viewBox="0 0 80 80">
+                 <circle class="bg" cx="40" cy="40" r="36"></circle>
+                 <circle id="white-acc-ring" class="progress" cx="40" cy="40" r="36"></circle>
+               </svg>
+               <div class="accuracy-val"><span id="white-acc">0%</span><span class="accuracy-label">Accuracy</span></div>
+               <div style="text-align:center; font-size:10px; margin-top:5px; color:var(--text-secondary)">WHITE (ELO: <span id="white-elo">--</span>)</div>
+            </div>
+            <div class="accuracy-circle">
+               <svg viewBox="0 0 80 80">
+                 <circle class="bg" cx="40" cy="40" r="36"></circle>
+                 <circle id="black-acc-ring" class="progress" cx="40" cy="40" r="36"></circle>
+               </svg>
+               <div class="accuracy-val"><span id="black-acc">0%</span><span class="accuracy-label">Accuracy</span></div>
+               <div style="text-align:center; font-size:10px; margin-top:5px; color:var(--text-secondary)">BLACK (ELO: <span id="black-elo">--</span>)</div>
             </div>
           </div>
+          
+          <div id="move-tally" class="tally-grid"></div>
         </div>
       </div>
 
-      <div class="controls" id="main-controls">
-        <button id="btnMenu" style="grid-column: span 2; background: #c0392b;">Quit to Menu</button>
-        <button id="btnReview" class="hidden" style="grid-column: span 2; background: var(--accent);">🔍 Review Game</button>
-        <button id="btnUndo">Undo Move (u)</button>
-        <button id="btnFlip">Flip Board (f)</button>
-        <button id="btnTheme" style="grid-column: span 2;">Toggle Theme</button>
-        <hr>
-        <button id="btnSave">Save (Local)</button>
-        <button id="btnLoad">Load (Local)</button>
-        <button id="btnExport">Export PGN</button>
-        <button id="btnImport" onclick="document.getElementById('file-upload').click()">Import PGN</button>
-        <input type="file" id="file-upload" accept=".pgn,text/plain" style="display:none" onchange="importPGN(event)" />
+      <!-- Analysis Controls -->
+      <div id="analysis-controls" class="controls hidden">
+        <button class="btn-primary" id="btnPrevMove" style="background:#484542; border-color:#333;">⬅ Prev</button>
+        <button class="btn-primary" id="btnNextMove" style="background:#484542; border-color:#333;">Next ➡</button>
+        <button class="btn-primary" id="btnExitAnalysis" style="grid-column: span 2; background:#312e2b; border-color:#111;">Exit Analysis</button>
       </div>
-      <div class="move-list-container">
-        <h3>Moves</h3>
-        <div id="move-list"></div>
+
+      <!-- Live Controls -->
+      <div id="main-controls" class="controls">
+        <button class="btn-primary" id="btnReview" class="hidden" style="grid-column: span 2;">Game Review</button>
+        <button class="btn-primary" id="btnUndo" style="background:#484542; border-color:#333;">Undo</button>
+        <button class="btn-primary" id="btnFlip" style="background:#484542; border-color:#333;">Flip</button>
+        <button class="btn-primary" id="btnMenu" style="grid-column: span 2; background:#312e2b; border-color:#111;">Main Menu</button>
+        
+        <div style="grid-column: span 2; display:flex; gap:5px;">
+           <button class="btn-primary" id="btnSave" style="flex:1; font-size:10px; background:#262421; border-color:#111;">Save</button>
+           <button class="btn-primary" id="btnLoad" style="flex:1; font-size:10px; background:#262421; border-color:#111;">Load</button>
+           <button class="btn-primary" id="btnExport" style="flex:1; font-size:10px; background:#262421; border-color:#111;">Export</button>
+        </div>
       </div>
     </div>
   </div>
   
-  <div id="promotion-dialog" class="hidden">
-    <div class="promo-content">
-      <div class="promo-piece" data-piece="q"></div>
-      <div class="promo-piece" data-piece="r"></div>
-      <div class="promo-piece" data-piece="b"></div>
-      <div class="promo-piece" data-piece="n"></div>
+  <!-- Promotion Dialog -->
+  <div id="promotion-dialog" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,0.8); display:flex; justify-content:center; align-items:center; z-index:1000;">
+    <div style="background:var(--bg-panel); padding:20px; border-radius:8px; display:flex; gap:10px;">
+      <div class="promo-piece" data-piece="q" style="width:60px; height:60px; cursor:pointer; background-size:contain; background-repeat:no-repeat;"></div>
+      <div class="promo-piece" data-piece="r" style="width:60px; height:60px; cursor:pointer; background-size:contain; background-repeat:no-repeat;"></div>
+      <div class="promo-piece" data-piece="b" style="width:60px; height:60px; cursor:pointer; background-size:contain; background-repeat:no-repeat;"></div>
+      <div class="promo-piece" data-piece="n" style="width:60px; height:60px; cursor:pointer; background-size:contain; background-repeat:no-repeat;"></div>
     </div>
   </div>
 

@@ -416,18 +416,43 @@ function highlightLegalMoves(sq) {
 }
 
 function updateMoveList() {
-  const history = game.history();
+  const history = game.history({ verbose: true });
   moveListEl.innerHTML = '';
-  let str = '';
+  let html = '';
+  
   for (let i = 0; i < history.length; i += 2) {
-    str += `<div class="move-row">
-      <span class="move-num">${(i/2)+1}.</span>
-      <span class="move-san" onclick="jumpTo(${i})">${history[i]}</span>
-      ${history[i+1] ? `<span class="move-san" onclick="jumpTo(${i+1})">${history[i+1]}</span>` : ''}
-    </div>`;
+    const turnNum = Math.floor(i / 2) + 1;
+    const isWActive = (analysisIndex === i);
+    const isBActive = (analysisIndex === i + 1);
+    
+    html += `
+      <div class="move-row">
+        <div class="move-num">${turnNum}.</div>
+        <div class="move-val ${isWActive ? 'active' : ''}" onclick="goToAnalysisStep(${i})">
+          ${history[i].san}
+          ${renderMoveBadge(i)}
+        </div>
+        ${history[i+1] ? `
+          <div class="move-val ${isBActive ? 'active' : ''}" onclick="goToAnalysisStep(${i+1})">
+            ${history[i+1].san}
+            ${renderMoveBadge(i+1)}
+          </div>
+        ` : '<div class="move-val"></div>'}
+      </div>
+    `;
   }
-  moveListEl.innerHTML = str;
-  moveListEl.scrollTop = moveListEl.scrollHeight;
+  moveListEl.innerHTML = html;
+  
+  const activeMove = moveListEl.querySelector('.active');
+  if (activeMove) activeMove.scrollIntoView({ block: 'nearest' });
+  else moveListEl.scrollTop = moveListEl.scrollHeight;
+}
+
+function renderMoveBadge(index) {
+  if (gameMode !== 'analysis' || !fullGameAnalysis[index]) return '';
+  const classification = fullGameAnalysis[index].classification.toLowerCase();
+  const icons = { brilliant: '!!', great: '!', best: '★', inaccuracy: '?!', mistake: '?', blunder: '??' };
+  return `<span class="badge badge-${classification}">${icons[classification] || ''}</span>`;
 }
 
 function jumpTo(index) {
@@ -539,7 +564,7 @@ function updateEvalBar(cp, mate) {
 
   let absoluteCp = cp;
   if (game.turn() === 'b') absoluteCp = -cp;
-  
+
   let absoluteMate = mate;
   if (mate !== null && game.turn() === 'b') absoluteMate = -mate;
 
@@ -547,32 +572,23 @@ function updateEvalBar(cp, mate) {
   let percentage = 50;
 
   if (absoluteMate !== null) {
-    text = (absoluteMate > 0 ? '+' : '-') + 'M' + Math.abs(absoluteMate);
+    text = 'M' + Math.abs(absoluteMate);
     percentage = absoluteMate > 0 ? 100 : 0;
   } else {
-    // Professional Sigmoid: 100 / (1 + exp(-cp/200))
-    // This makes the center of the bar more sensitive and the ends more compressed.
     percentage = 100 / (1 + Math.exp(-absoluteCp / 200));
-    
-    let evalText = (absoluteCp / 100).toFixed(1);
-    if (absoluteCp > 0) evalText = '+' + evalText;
-    text = evalText;
+    text = (Math.abs(absoluteCp) / 100).toFixed(1);
   }
 
-  // Adjust for orientation
   if (boardFlipped) {
     fillEl.style.height = (100 - percentage) + '%';
-    document.getElementById('eval-bar-container').style.transform = 'rotate(180deg)';
-    textEl.style.transform = 'translateY(-50%) rotate(180deg)';
+    textEl.className = percentage > 50 ? 'eval-bar-text top' : 'eval-bar-text bottom';
   } else {
     fillEl.style.height = percentage + '%';
-    document.getElementById('eval-bar-container').style.transform = '';
-    textEl.style.transform = 'translateY(-50%)';
+    textEl.className = percentage > 50 ? 'eval-bar-text bottom' : 'eval-bar-text top';
   }
 
   textEl.innerText = text;
 }
-
 // --- POST-GAME ANALYSIS MODE ---
 
 let analysisHistory = [];
@@ -687,10 +703,12 @@ function calculateCPL(prev, curr, turn) {
 }
 
 function classifyMove(cpl) {
-  if (cpl < 20) return "Best";
-  if (cpl <= 50) return "Good";
-  if (cpl <= 100) return "Inaccuracy";
-  if (cpl <= 250) return "Mistake";
+  if (cpl < 5) return "Brilliant";
+  if (cpl < 12) return "Great";
+  if (cpl < 25) return "Best";
+  if (cpl <= 55) return "Good";
+  if (cpl <= 110) return "Inaccuracy";
+  if (cpl <= 260) return "Mistake";
   return "Blunder";
 }
 
