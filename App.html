@@ -281,9 +281,19 @@ function startPolling() {
         setConnectionStatus('green');
 
         const state = res.data;
-        whiteTime = state.whiteTime;
-        blackTime = state.blackTime;
-        lastServerSync = state.lastMoveTimestamp;
+        
+        // --- CLOCK SMOOTHING ALGORITHM ---
+        if (state.whiteTime !== null && state.blackTime !== null) {
+          const wDelta = Math.abs(state.whiteTime - whiteTime);
+          const bDelta = Math.abs(state.blackTime - blackTime);
+          
+          if (wDelta > 500 || bDelta > 500) {
+            console.warn("Clock Resync (Delta > 500ms)");
+            whiteTime = state.whiteTime;
+            blackTime = state.blackTime;
+          }
+          lastServerSync = state.lastMoveTimestamp;
+        }
 
         const tbToast = document.getElementById('takeback-toast');
         const drToast = document.getElementById('draw-toast');
@@ -319,7 +329,8 @@ function startPolling() {
           }
           
           if (isTakebackDetected) {
-            pendingPremove = null;
+            // Aggressive Premove Destruction on Takeback
+            pendingPremove = null; 
             clearHighlights();
             const undoBtn = document.getElementById('btnUndo');
             if (undoBtn.innerText === "Proposing...") {
@@ -831,5 +842,12 @@ document.getElementById('btnSave').addEventListener('click', () => { const pgn =
 document.getElementById('btnLoad').addEventListener('click', () => { google.script.run.withSuccessHandler(res => { if (res && res.success && res.data) { game.load_pgn(res.data); updateBoard(); } else { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } } }).withFailureHandler(() => { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } }).loadGame(); });
 document.getElementById('btnExport').addEventListener('click', () => { const blob = new Blob([game.pgn()], {type: "text/plain;charset=utf-8"}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'game.pgn'; a.click(); });
 
-document.addEventListener('DOMContentLoaded', () => { initBoard(); document.getElementById('welcome-screen').classList.remove('hidden'); });
+document.addEventListener('DOMContentLoaded', () => { 
+  initBoard(); 
+  document.getElementById('welcome-screen').classList.remove('hidden'); 
+  // iOS Safari Double-Tap Zoom Prevention
+  document.getElementById('board').addEventListener('dblclick', function(e) { 
+    e.preventDefault(); 
+  }, { passive: false });
+});
 </script>

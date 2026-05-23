@@ -95,7 +95,7 @@ body {
   grid-template-rows: repeat(8, var(--square-size));
   user-select: none;
   box-shadow: 0 5px 15px rgba(0,0,0,0.5);
-  touch-action: manipulation; /* Prevents double-tap to zoom on mobile */
+  touch-action: manipulation !important; /* Prevents double-tap to zoom on mobile */
 }
 
 .square {
@@ -105,6 +105,7 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
+  touch-action: manipulation !important;
 }
 .square.light { background-color: var(--square-light); color: var(--square-dark); }
 .square.dark { background-color: var(--square-dark); color: var(--square-light); }
