@@ -47,14 +47,24 @@
   <!-- MAIN APP LAYOUT -->
   <div class="app-container" id="main-app" style="filter: blur(5px); pointer-events: none;">
     
-    <div class="board-container">
+    <div class="board-container" style="position: relative;">
       <!-- Eval Bar -->
       <div id="eval-bar-container" class="eval-bar-container">
         <div id="eval-bar-fill" class="eval-bar-fill"></div>
         <div id="eval-bar-text" class="eval-bar-text bottom">0.0</div>
       </div>
       <!-- Chess Board -->
-      <div id="board"></div>
+      <div id="board-wrapper" style="position: relative;">
+        <div id="board"></div>
+        <svg id="board-svg" style="pointer-events: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10;">
+          <defs>
+            <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#f23c32" fill-opacity="0.8" />
+            </marker>
+          </defs>
+          <g id="svg-draw-layer"></g>
+        </svg>
+      </div>
     </div>
 
     <!-- SIDEBAR -->
@@ -63,6 +73,10 @@
         <div id="game-info-panel">New Game</div>
         <div id="performance-metrics" style="font-size:9px; color:var(--text-secondary); margin-top:4px;">
            <span id="thread-count">--</span> Threads | <span id="execution-time">0</span>ms
+        </div>
+        <div style="margin-top: 10px; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary);">
+          <input type="checkbox" id="premove-toggle" checked>
+          <label for="premove-toggle">Enable Premoves</label>
         </div>
       </div>
 

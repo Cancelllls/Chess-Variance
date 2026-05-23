@@ -19,6 +19,14 @@ const promoDialog = document.getElementById('promotion-dialog');
 let pendingMove = null;
 let selectedSquare = null;
 
+// Premove & SVG State
+let pendingPremove = null;
+const premoveToggle = document.getElementById('premove-toggle');
+const svgLayer = document.getElementById('svg-draw-layer');
+let isRightClickDragging = false;
+let rightClickStartSq = null;
+let currentRightClickSq = null;
+
 // --- WELCOME SCREEN LOGIC ---
 
 function showMenu(id) {
@@ -128,6 +136,18 @@ function startPolling() {
           }
           updateBoard();
           playSound('move');
+
+          // --- PREMOVE EXECUTION ---
+          if (pendingPremove && game.turn() === playerColor) {
+            const move = game.move({ from: pendingPremove.from, to: pendingPremove.to, promotion: 'q' });
+            if (move) {
+              const currentFen = game.fen();
+              google.script.run.makeMove(roomId, currentFen, game.game_over(), game.history().length);
+              updateBoard();
+              playSound('move');
+            }
+            pendingPremove = null;
+          }
         }
       }).getGameState(roomId);
     } catch(e){}
@@ -210,8 +230,13 @@ function updateBoard() {
 
     sq.classList.remove('highlight', 'last-move', 'in-check');
     sq.classList.remove('anno-best', 'anno-good', 'anno-inaccuracy', 'anno-mistake', 'anno-blunder');
+    sq.classList.remove('premove');
     const oldTag = sq.querySelector('.move-classification-tag');
     if (oldTag) oldTag.remove();
+
+    if (pendingPremove && (sq.dataset.square === pendingPremove.from || sq.dataset.square === pendingPremove.to)) {
+      sq.classList.add('premove');
+    }
   });
 
   if (game.in_check()) {
@@ -240,13 +265,77 @@ function updateBoard() {
   }
 }
 
+// --- SVG VISUALIZATION (ARROWS & CIRCLES) ---
+
+function getSquareCenter(sq) {
+  const el = boardEl.querySelector(`[data-square="${sq}"]`);
+  if (!el) return { x: 0, y: 0 };
+  const rect = el.getBoundingClientRect();
+  const boardRect = boardEl.getBoundingClientRect();
+  return {
+    x: (rect.left - boardRect.left) + rect.width / 2,
+    y: (rect.top - boardRect.top) + rect.height / 2
+  };
+}
+
+function drawCircle(sq) {
+  const center = getSquareCenter(sq);
+  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  circle.setAttribute("cx", center.x);
+  circle.setAttribute("cy", center.y);
+  circle.setAttribute("r", "40%"); // Proportionate to square
+  circle.setAttribute("fill", "none");
+  circle.setAttribute("stroke", "#f23c32");
+  circle.setAttribute("stroke-width", "4");
+  circle.setAttribute("opacity", "0.7");
+  svgLayer.appendChild(circle);
+}
+
+function drawArrow(from, to) {
+  const start = getSquareCenter(from);
+  const end = getSquareCenter(to);
+  
+  // Back off the end a bit so the arrowhead doesn't overlap center
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const angle = Math.atan2(dy, dx);
+  const length = Math.sqrt(dx*dx + dy*dy);
+  const backOff = 15;
+  
+  const endX = start.x + Math.cos(angle) * (length - backOff);
+  const endY = start.y + Math.sin(angle) * (length - backOff);
+
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", start.x);
+  line.setAttribute("y1", start.y);
+  line.setAttribute("x2", endX);
+  line.setAttribute("y2", endY);
+  line.setAttribute("stroke", "#f23c32");
+  line.setAttribute("stroke-width", "8");
+  line.setAttribute("opacity", "0.7");
+  line.setAttribute("marker-end", "url(#arrowhead)");
+  svgLayer.appendChild(line);
+}
+
+function clearSVG() {
+  svgLayer.innerHTML = '';
+}
+
 // --- INTERACTION ---
 
 function handleSquareClick(e) {
+  clearSVG(); // Left click clears visualization
   if (gameMode === 'analysis') return;
-  if (gameMode !== 'local' && game.turn() !== playerColor) return;
   
   const sq = e.currentTarget.dataset.square;
+  if (pendingPremove) {
+    pendingPremove = null;
+    updateBoard();
+    return;
+  }
+
+  if (gameMode !== 'local' && game.turn() !== playerColor) return;
+  
   if (selectedSquare) {
     attemptMove(selectedSquare, sq);
     selectedSquare = null;
@@ -262,14 +351,31 @@ function handleSquareClick(e) {
 }
 
 function handleDragStart(e) {
+  clearSVG();
   if (gameMode === 'analysis') { e.preventDefault(); return; }
-  if (gameMode !== 'local' && game.turn() !== playerColor) {
-    e.preventDefault();
-    return;
+  
+  const isOpponentTurn = (gameMode === 'online' && game.turn() !== playerColor);
+  const isPremoveEnabled = premoveToggle.checked;
+  
+  const sq = e.target.dataset.square;
+  const p = game.get(sq);
+
+  if (isOpponentTurn) {
+    if (!isPremoveEnabled || (p && p.color !== playerColor)) {
+      e.preventDefault();
+      return;
+    }
+  } else {
+    pendingPremove = null; // Clear premove if player starts a real move
+    if (p && p.color !== playerColor) {
+      e.preventDefault();
+      return;
+    }
   }
-  selectedSquare = e.target.dataset.square;
+  
+  selectedSquare = sq;
   e.dataTransfer.setData('text/plain', selectedSquare);
-  highlightLegalMoves(selectedSquare);
+  if (!isOpponentTurn) highlightLegalMoves(selectedSquare);
 }
 
 function handleDrop(e) {
@@ -278,10 +384,45 @@ function handleDrop(e) {
   let target = e.target;
   if (target.classList.contains('piece')) target = target.parentElement;
   const to = target.dataset.square;
+  
+  const isOpponentTurn = (gameMode === 'online' && game.turn() !== playerColor);
+  
+  if (isOpponentTurn && premoveToggle.checked) {
+    pendingPremove = { from, to };
+    updateBoard();
+    return;
+  }
+
   if (from && to) attemptMove(from, to);
   selectedSquare = null;
   clearHighlights();
 }
+
+// Right Click Logic
+document.getElementById('board-wrapper').addEventListener('contextmenu', e => e.preventDefault());
+document.getElementById('board-wrapper').addEventListener('mousedown', e => {
+  if (e.button === 2) { // Right Click
+    isRightClickDragging = true;
+    let target = e.target;
+    if (target.classList.contains('piece')) target = target.parentElement;
+    rightClickStartSq = target.dataset.square;
+  }
+});
+
+document.addEventListener('mouseup', e => {
+  if (e.button === 2 && isRightClickDragging) {
+    isRightClickDragging = false;
+    let target = e.target;
+    if (target.classList.contains('piece')) target = target.parentElement;
+    const endSq = target.dataset.square;
+    
+    if (rightClickStartSq && endSq) {
+      if (rightClickStartSq === endSq) drawCircle(endSq);
+      else drawArrow(rightClickStartSq, endSq);
+    }
+    rightClickStartSq = null;
+  }
+});
 
 let previousFen = null;
 
