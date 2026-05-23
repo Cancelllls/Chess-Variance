@@ -62,21 +62,24 @@ function getGameState(gameId) {
 }
 
 function makeMove(gameId, fenString, isGameOver, moveCount) {
-  var cache = CacheService.getScriptCache();
-  cache.put('chess_state_' + gameId, fenString, 21600);
-  
-  isGameOver = isGameOver || false;
-  moveCount = moveCount || 0;
-  
-  if (moveCount === 0 && fenString) {
-    var parts = fenString.split(' ');
-    if (parts.length >= 6) {
-      moveCount = parseInt(parts[5], 10) || 0;
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000); // Wait up to 10s for lock
+    
+    var cache = CacheService.getScriptCache();
+    cache.put('chess_state_' + gameId, fenString, 21600);
+    
+    isGameOver = isGameOver || false;
+    moveCount = moveCount || 0;
+    
+    if (moveCount === 0 && fenString) {
+      var parts = fenString.split(' ');
+      if (parts.length >= 6) {
+        moveCount = parseInt(parts[5], 10) || 0;
+      }
     }
-  }
 
-  if (isGameOver || (moveCount > 0 && moveCount % 10 === 0)) {
-    try {
+    if (isGameOver || (moveCount > 0 && moveCount % 10 === 0)) {
       var ss = SpreadsheetApp.getActiveSpreadsheet();
       if (ss) {
         var sheet = ss.getSheetByName("ChessGames");
@@ -97,7 +100,12 @@ function makeMove(gameId, fenString, isGameOver, moveCount) {
           sheet.appendRow([gameId, fenString, new Date()]);
         }
       }
-    } catch(e) {}
+    }
+    return true;
+  } catch(e) {
+    console.error("Lock error in makeMove: " + e);
+    return false;
+  } finally {
+    lock.releaseLock();
   }
-  return true;
 }

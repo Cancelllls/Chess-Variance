@@ -73,17 +73,22 @@ function startAIGame(color) {
 function createOnlineRoom() {
   document.getElementById('online-status').innerText = "Creating room...";
   try {
-    google.script.run.withSuccessHandler(id => {
-      roomId = id;
-      gameMode = 'online';
-      playerColor = 'w';
-      boardFlipped = false;
-      game.reset();
-      updateBoard();
-      document.getElementById('game-info-panel').innerText = "Room Code: " + roomId;
-      closeWelcomeScreen();
-      startPolling();
-    }).createRoom();
+    google.script.run
+      .withSuccessHandler(id => {
+        roomId = id;
+        gameMode = 'online';
+        playerColor = 'w';
+        boardFlipped = false;
+        game.reset();
+        updateBoard();
+        document.getElementById('game-info-panel').innerText = "Room Code: " + roomId;
+        closeWelcomeScreen();
+        startPolling();
+      })
+      .withFailureHandler(e => {
+        document.getElementById('online-status').innerText = "Server Error: Failed to create room.";
+      })
+      .createRoom();
   } catch(e) {
     document.getElementById('online-status').innerText = "Error: Network / Apps Script not detected.";
   }
@@ -94,29 +99,34 @@ function joinOnlineRoom() {
   if(id.length !== 4) return;
   document.getElementById('online-status').innerText = "Joining...";
   try {
-    google.script.run.withSuccessHandler(state => {
-      if (state === null) {
-         document.getElementById('online-status').innerText = "Room not found.";
-         return;
-      }
-      roomId = id;
-      gameMode = 'online';
-      playerColor = 'b';
-      boardFlipped = true;
-      if (state) {
-        if (state.indexOf('[') !== -1 || state.indexOf('1.') === 0) {
-          game.load_pgn(state); // Fallback if old PGN format is returned
-        } else {
-          game.load(state); // Load FEN string
+    google.script.run
+      .withSuccessHandler(state => {
+        if (state === null) {
+           document.getElementById('online-status').innerText = "Room not found.";
+           return;
         }
-      } else {
-        game.reset();
-      }
-      updateBoard();
-      document.getElementById('game-info-panel').innerText = "Room Code: " + roomId;
-      closeWelcomeScreen();
-      startPolling();
-    }).getGameState(id);
+        roomId = id;
+        gameMode = 'online';
+        playerColor = 'b';
+        boardFlipped = true;
+        if (state) {
+          if (state.indexOf('[') !== -1 || state.indexOf('1.') === 0) {
+            game.load_pgn(state); // Fallback if old PGN format is returned
+          } else {
+            game.load(state); // Load FEN string
+          }
+        } else {
+          game.reset();
+        }
+        updateBoard();
+        document.getElementById('game-info-panel').innerText = "Room Code: " + roomId;
+        closeWelcomeScreen();
+        startPolling();
+      })
+      .withFailureHandler(e => {
+        document.getElementById('online-status').innerText = "Server Error: Failed to join room.";
+      })
+      .getGameState(id);
   } catch(e) {
     document.getElementById('online-status').innerText = "Error: Network / Apps Script not detected.";
   }
@@ -127,29 +137,36 @@ function startPolling() {
   pollInterval = setInterval(() => {
     if (gameMode !== 'online' || !roomId) return;
     try {
-      google.script.run.withSuccessHandler(state => {
-        if (state !== null && state !== game.fen() && state !== game.pgn()) {
-          if (state.indexOf('[') !== -1 || state.indexOf('1.') === 0) {
-            game.load_pgn(state);
-          } else {
-            game.load(state);
-          }
-          updateBoard();
-          playSound('move');
-
-          // --- PREMOVE EXECUTION ---
-          if (pendingPremove && game.turn() === playerColor) {
-            const move = game.move({ from: pendingPremove.from, to: pendingPremove.to, promotion: 'q' });
-            if (move) {
-              const currentFen = game.fen();
-              google.script.run.makeMove(roomId, currentFen, game.game_over(), game.history().length);
-              updateBoard();
-              playSound('move');
+      google.script.run
+        .withSuccessHandler(state => {
+          if (state !== null && state !== game.fen() && state !== game.pgn()) {
+            if (state.indexOf('[') !== -1 || state.indexOf('1.') === 0) {
+              game.load_pgn(state);
+            } else {
+              game.load(state);
             }
-            pendingPremove = null;
+            updateBoard();
+            playSound('move');
+
+            // --- PREMOVE EXECUTION ---
+            if (pendingPremove && game.turn() === playerColor) {
+              const move = game.move({ from: pendingPremove.from, to: pendingPremove.to, promotion: 'q' });
+              if (move) {
+                const currentFen = game.fen();
+                google.script.run
+                  .withFailureHandler(errorCallback)
+                  .makeMove(roomId, currentFen, game.game_over(), game.history().length);
+                updateBoard();
+                playSound('move');
+              }
+              pendingPremove = null;
+            }
           }
-        }
-      }).getGameState(roomId);
+        })
+        .withFailureHandler(e => {
+          console.warn("Polling error:", e);
+        })
+        .getGameState(roomId);
     } catch(e){}
   }, 1000);
 }
@@ -505,6 +522,8 @@ function attemptMove(from, to, promo = null) {
       setTimeout(() => fromEl.classList.remove('shake'), 400);
     }
   }
+  selectedSquare = null;
+  clearHighlights();
 }
 
 function showPromotionDialog() {
