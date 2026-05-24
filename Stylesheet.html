@@ -87,14 +87,7 @@ body {
 .eval-bar-text.top { top: 5px; }
 .eval-bar-text.bottom { bottom: 5px; color: #bbb; }
 
-#board {
-  width: calc(var(--square-size) * 8);
-  height: calc(var(--square-size) * 8);
-  display: grid;
-  grid-template-columns: repeat(8, var(--square-size));
-  grid-template-rows: repeat(8, var(--square-size));
-  user-select: none;
-  box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+#board, .chessboard-63f37, .square, .square-55d63 {
   touch-action: manipulation !important; /* Prevents double-tap to zoom on mobile */
 }
 
@@ -105,7 +98,6 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
-  touch-action: manipulation !important;
 }
 .square.light { background-color: var(--square-light); color: var(--square-dark); }
 .square.dark { background-color: var(--square-dark); color: var(--square-light); }
@@ -384,6 +376,19 @@ body[data-theme="cyberpunk"] .eval-bar-text {
     0% { opacity: 1; }
     50% { opacity: 0.3; }
     100% { opacity: 1; }
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(129, 182, 76, 0.1);
+  border-left-color: var(--accent-green);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Takeback & Draw Toasts */

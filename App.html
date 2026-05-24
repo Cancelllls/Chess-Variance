@@ -81,14 +81,30 @@ document.getElementById('mute-toggle').addEventListener('click', function() {
 function setConnectionStatus(status) {
   connectionStatus = status;
   const dot = document.getElementById('connection-status');
+  const modal = document.getElementById('disconnect-modal');
+  
   if (dot) dot.className = 'conn-dot ' + status;
-  if (status === 'red') document.getElementById('disconnect-modal').classList.remove('hidden');
+  
+  // Show reconnecting modal for any non-green status
+  if (status === 'yellow' || status === 'red') {
+    modal.classList.remove('hidden');
+  } else {
+    modal.classList.add('hidden');
+  }
 }
 
+// Clock State
+let whiteTime = 300000;
+let blackTime = 300000;
+let lastServerSync = Date.now();
+let isGamePaused = false;
+
+// --- AUDIO & HAPTICS CONTROLLER ---
+...
 // --- CLOCK LOGIC ---
 function updateClocks() {
   const now = Date.now();
-  if (gameMode === 'online' && !game.game_over()) {
+  if (gameMode === 'online' && !game.game_over() && !isGamePaused) {
     if (whiteTime !== null && blackTime !== null) {
       const elapsed = now - lastServerSync;
       if (game.turn() === 'w') whiteTime = Math.max(0, whiteTime - elapsed);
@@ -99,6 +115,9 @@ function updateClocks() {
         if (clockInterval) clearInterval(clockInterval);
       }
     }
+  } else {
+    // If paused, keep shifting the base sync timestamp so we don't have a huge jump on resume
+    lastServerSync = now;
   }
   
   const formatTime = (ms) => {
@@ -331,6 +350,7 @@ function startPolling() {
           if (isTakebackDetected) {
             // Aggressive Premove Destruction on Takeback
             pendingPremove = null; 
+            boardEl.querySelectorAll('.square.premove').forEach(s => s.classList.remove('premove'));
             clearHighlights();
             const undoBtn = document.getElementById('btnUndo');
             if (undoBtn.innerText === "Proposing...") {

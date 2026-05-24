@@ -226,11 +226,16 @@
 
   <!-- Disconnection Modal -->
   <div id="disconnect-modal" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,0.9); display:flex; justify-content:center; align-items:center; z-index:2000; text-align:center;">
-    <div style="background:var(--bg-panel); padding:40px; border-radius:12px; border:2px solid #fa412d;">
-      <h2 style="color:#fa412d; margin-top:0;">Connection Lost</h2>
-      <p style="color:var(--text-secondary); margin-bottom:30px;">We've lost touch with the server after multiple attempts.</p>
-      <button class="btn-primary" onclick="window.location.reload()" style="background:#fa412d; border-color:#9e2a1e;">Refresh Game</button>
+    <div style="background:var(--bg-panel); padding:40px; border-radius:12px; border:2px solid var(--accent-green);">
+      <div class="spinner" style="margin: 0 auto 20px;"></div>
+      <h2 style="color:var(--accent-green); margin-top:0;">Reconnecting...</h2>
+      <p style="color:var(--text-secondary); margin-bottom:10px;">Please wait while we restore your connection.</p>
     </div>
+  </div>
+
+  <!-- Opponent Offline Banner -->
+  <div id="opponent-offline-banner" class="hidden" style="position:fixed; top:0; left:0; right:0; background:#faca2f; color:#000; text-align:center; padding:5px; font-size:12px; font-weight:bold; z-index:1500;">
+    ⚠️ Opponent disconnected. Clock paused.
   </div>
 </body>
 </html>
