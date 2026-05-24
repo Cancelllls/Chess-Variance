@@ -19,6 +19,7 @@ let aiDepth = 2;
 let whiteTime = 300000;
 let blackTime = 300000;
 let lastServerSync = Date.now();
+let isGamePaused = false;
 
 // DOM Elements
 const boardEl = document.getElementById('board');
@@ -93,14 +94,6 @@ function setConnectionStatus(status) {
   }
 }
 
-// Clock State
-let whiteTime = 300000;
-let blackTime = 300000;
-let lastServerSync = Date.now();
-let isGamePaused = false;
-
-// --- AUDIO & HAPTICS CONTROLLER ---
-...
 // --- CLOCK LOGIC ---
 function updateClocks() {
   const now = Date.now();
@@ -116,7 +109,7 @@ function updateClocks() {
       }
     }
   } else {
-    // If paused, keep shifting the base sync timestamp so we don't have a huge jump on resume
+    // If paused or local/AI, just keep the sync anchor moving to avoid sudden jumps
     lastServerSync = now;
   }
   
@@ -178,7 +171,7 @@ function startLocalMultiplayer() {
   gameMode = 'local';
   game.reset();
   boardFlipped = false;
-  whiteTime = blackTime = 300000;
+  whiteTime = blackTime = null; // Unlimited for local
   updateBoard();
   document.getElementById('game-info-panel').innerText = "Local Pass & Play";
   closeWelcomeScreen();
@@ -190,7 +183,7 @@ function startAIGame(color) {
   aiDepth = parseInt(document.getElementById('ai-diff-slider').value);
   game.reset();
   boardFlipped = (color === 'b');
-  whiteTime = blackTime = 300000;
+  whiteTime = blackTime = null; // Unlimited for AI
   updateBoard();
   document.getElementById('game-info-panel').innerText = "Playing vs Computer";
   closeWelcomeScreen();
@@ -213,10 +206,8 @@ function createOnlineRoom() {
         playerRole = 'player';
         boardFlipped = false;
         game.reset();
-        
         const tc = (timeControl === "null") ? null : parseInt(timeControl, 10);
         whiteTime = blackTime = tc;
-        
         updateBoard();
         document.getElementById('game-info-panel').innerText = "Room Code: " + roomId;
         closeWelcomeScreen();
@@ -252,20 +243,14 @@ function joinOnlineRoom() {
         playerColor = res.role === 'spectator' ? 'w' : res.role;
         playerRole = res.role;
         boardFlipped = (playerColor === 'b');
+        if (playerRole === 'spectator') document.getElementById('spectator-badge').classList.remove('hidden');
         
-        if (playerRole === 'spectator') {
-          document.getElementById('spectator-badge').classList.remove('hidden');
-        }
-
-        if (state && state.fen) {
-          game.load(state.fen);
-          whiteTime = state.whiteTime;
-          blackTime = state.blackTime;
-          lastServerSync = state.lastMoveTimestamp;
-        } else {
-          game.reset();
-          whiteTime = blackTime = 300000;
-        }
+        // Inherit exact server state
+        game.load(state.fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+        whiteTime = state.whiteTime;
+        blackTime = state.blackTime;
+        lastServerSync = state.lastMoveTimestamp;
+        
         updateBoard();
         document.getElementById('game-info-panel').innerText = "Room Code: " + roomId;
         closeWelcomeScreen();
@@ -291,23 +276,28 @@ function startPolling() {
     google.script.run
       .withSuccessHandler(res => {
         if (!res || !res.success) {
-          handlePollError("Server error: State unreachable.");
+          handlePollError();
           return;
         }
         
+        // Reset backoff on success
         pollRetryCount = 0;
         backoffDelay = 1000;
         setConnectionStatus('green');
 
         const state = res.data;
+        isGamePaused = !!state.isPaused;
         
-        // --- CLOCK SMOOTHING ALGORITHM ---
+        // --- OPPONENT OFFLINE BANNER ---
+        const banner = document.getElementById('opponent-offline-banner');
+        if (isGamePaused) banner.classList.remove('hidden');
+        else banner.classList.add('hidden');
+
+        // AUTHORITATIVE SYNC (Check for drift)
         if (state.whiteTime !== null && state.blackTime !== null) {
           const wDelta = Math.abs(state.whiteTime - whiteTime);
           const bDelta = Math.abs(state.blackTime - blackTime);
-          
           if (wDelta > 500 || bDelta > 500) {
-            console.warn("Clock Resync (Delta > 500ms)");
             whiteTime = state.whiteTime;
             blackTime = state.blackTime;
           }
@@ -318,18 +308,21 @@ function startPolling() {
         const drToast = document.getElementById('draw-toast');
         const isTakebackActive = !!state.takebackRequest;
         
+        // Takeback sync
         if (state.takebackRequest && state.takebackRequest !== playerColor && playerRole !== 'spectator') {
           tbToast.classList.remove('hidden');
         } else {
           tbToast.classList.add('hidden');
         }
 
+        // Draw sync
         if (state.drawOffer && state.drawOffer !== playerColor && playerRole !== 'spectator') {
           drToast.classList.remove('hidden');
         } else {
           drToast.classList.add('hidden');
         }
 
+        // Game Over sync
         if (state.gameOver) {
           tbToast.classList.add('hidden');
           drToast.classList.add('hidden');
@@ -342,14 +335,10 @@ function startPolling() {
           const serverHistory = new Chess(state.fen).history();
           const isTakebackDetected = serverHistory.length < currentHistory.length;
           
-          const loadSuccess = game.load(state.fen);
-          if (!loadSuccess) {
-              game.load(state.fen.split(' ')[0] + ' w KQkq - 0 1');
-          }
+          game.load(state.fen);
           
           if (isTakebackDetected) {
-            // Aggressive Premove Destruction on Takeback
-            pendingPremove = null; 
+            pendingPremove = null;
             boardEl.querySelectorAll('.square.premove').forEach(s => s.classList.remove('premove'));
             clearHighlights();
             const undoBtn = document.getElementById('btnUndo');
@@ -385,21 +374,17 @@ function startPolling() {
         }
         pollInterval = setTimeout(poll, 1000);
       })
-      .withFailureHandler(e => {
-        handlePollError(e);
+      .withFailureHandler(() => {
+        handlePollError();
       })
       .getGameState(roomId, playerName);
   };
   
-  const handlePollError = (err) => {
-    console.warn("Polling error:", err);
+  const handlePollError = () => {
     pollRetryCount++;
-    setConnectionStatus('yellow');
-    if (pollRetryCount >= 4) {
-      setConnectionStatus('red');
-      return;
-    }
-    backoffDelay *= 2;
+    setConnectionStatus('yellow'); // Shows the infinite "Reconnecting..." overlay
+    
+    backoffDelay = Math.min(5000, backoffDelay * 2); // Cap at 5s, infinite retries
     pollInterval = setTimeout(poll, backoffDelay);
   };
 
@@ -441,17 +426,12 @@ function initBoard() {
       square.dataset.square = sqName;
       square.setAttribute('aria-label', sqName);
       
-      // Secret Theme Listener (a8 = top-left: r=0, c=0)
       if (sqName === 'a8') {
         square.addEventListener('mousedown', () => {
            const now = Date.now();
-           if (now - lastSecretClickTime < 1000) {
-             secretThemeClicks++;
-           } else {
-             secretThemeClicks = 1;
-           }
+           if (now - lastSecretClickTime < 1000) secretThemeClicks++;
+           else secretThemeClicks = 1;
            lastSecretClickTime = now;
-           
            if (secretThemeClicks >= 3) {
              const current = document.body.getAttribute('data-theme');
              document.body.setAttribute('data-theme', current === 'cyberpunk' ? '' : 'cyberpunk');
@@ -476,7 +456,6 @@ function initBoard() {
       square.addEventListener('click', handleSquareClick);
       square.addEventListener('dragover', e => e.preventDefault());
       square.addEventListener('drop', handleDrop);
-      
       boardEl.appendChild(square);
     }
   }
@@ -485,14 +464,11 @@ function initBoard() {
 function updateBoard() {
   const b = game.board();
   const squares = boardEl.querySelectorAll('.square');
-  
   boardEl.style.transform = boardFlipped ? 'rotate(180deg)' : '';
-  
   squares.forEach(sq => {
     const r = parseInt(sq.dataset.row);
     const c = parseInt(sq.dataset.col);
     const piece = b[r][c];
-    
     let existingPiece = sq.querySelector('.piece');
     if (piece) {
       if (!existingPiece) {
@@ -512,10 +488,6 @@ function updateBoard() {
     } else if (existingPiece) existingPiece.remove();
 
     sq.classList.remove('highlight', 'legal-move', 'in-check', 'premove');
-    sq.classList.remove('anno-best', 'anno-good', 'anno-inaccuracy', 'anno-mistake', 'anno-blunder');
-    const oldTag = sq.querySelector('.move-classification-tag');
-    if (oldTag) oldTag.remove();
-
     if (pendingPremove && (sq.dataset.square === pendingPremove.from || sq.dataset.square === pendingPremove.to)) {
       sq.classList.add('premove');
     }
@@ -581,7 +553,8 @@ function handleDragStart(e) {
   clearSVG();
   if (gameMode === 'analysis' || playerRole === 'spectator') { e.preventDefault(); return; }
   
-  if (connectionStatus !== 'green' && gameMode === 'online') {
+  // Disable dragging if connection is unstable or game is paused
+  if ((connectionStatus !== 'green' || isGamePaused) && gameMode === 'online') {
     e.preventDefault();
     return;
   }
@@ -762,7 +735,6 @@ function highlightSquare(sq) { const el = boardEl.querySelector(`[data-square="$
 function clearHighlights() { boardEl.querySelectorAll('.square').forEach(sq => sq.classList.remove('highlight', 'legal-move')); }
 function highlightLegalMoves(sq) { game.moves({ square: sq, verbose: true }).forEach(m => { const el = boardEl.querySelector(`[data-square="${m.to}"]`); if (el) el.classList.add('legal-move'); }); }
 function showPromotionDialog() { promoDialog.classList.remove('hidden'); }
-document.querySelectorAll('.promo-piece').forEach(el => { el.addEventListener('click', function() { const promo = this.dataset.piece; promoDialog.classList.add('hidden'); if (pendingMove) { attemptMove(pendingMove.from, pendingMove.to, promo); pendingMove = null; } }); });
 function makeAIMove() { if (gameMode !== 'ai' || game.game_over()) return; const m = getBestMove(game, aiDepth); if (m) { game.move(m); updateBoard(); } }
 function showLeaderboard() {
   showMenu('menu-leaderboard');
@@ -865,9 +837,6 @@ document.getElementById('btnExport').addEventListener('click', () => { const blo
 document.addEventListener('DOMContentLoaded', () => { 
   initBoard(); 
   document.getElementById('welcome-screen').classList.remove('hidden'); 
-  // iOS Safari Double-Tap Zoom Prevention
-  document.getElementById('board').addEventListener('dblclick', function(e) { 
-    e.preventDefault(); 
-  }, { passive: false });
+  document.getElementById('board').addEventListener('dblclick', function(e) { e.preventDefault(); }, { passive: false });
 });
 </script>
