@@ -956,20 +956,25 @@ function showPromotionDialog() { promoDialog.classList.remove('hidden'); }
 function makeAIMove() { 
   if (gameMode !== 'ai' || game.game_over()) return; 
   
+  const infoEl = document.getElementById('game-info-panel');
+  if (infoEl) infoEl.innerText = "Computer is thinking...";
+
   // Map difficulty slider (1-4) to Stockfish depth (4, 8, 12, 16)
   const depth = aiDepth * 4;
   
   enginePool.evaluate(game.fen(), depth, 'ai_move', (cp, mate, taskId, bestMove) => {
     if (gameMode !== 'ai' || game.game_over()) return;
-    
+    if (infoEl) infoEl.innerText = "Playing vs Computer";
+
     if (bestMove) {
       const moveResult = game.move(bestMove, { sloppy: true });
-      updateBoard();
-      
-      const isCapture = moveResult.flags.includes('c') || moveResult.flags.includes('e');
-      if (game.in_check()) AudioController.play('check');
-      else if (isCapture) AudioController.play('capture');
-      else AudioController.play('move');
+      if (moveResult) {
+        updateBoard();
+        const isCapture = moveResult.flags.includes('c') || moveResult.flags.includes('e');
+        if (game.in_check()) AudioController.play('check');
+        else if (isCapture) AudioController.play('capture');
+        else AudioController.play('move');
+      }
     }
   });
 }

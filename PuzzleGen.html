@@ -22,148 +22,134 @@ class EnginePool {
         return;
       }
 
-      const workerLogic = `
-        // --- WORKER STATE ---
-        let game = new Chess();
-        let state = 'IDLE'; 
-        let solutionMoves = [];
-        let initialFen = '';
-        let extractionDepth = 0;
-        let lastEval = 0;
-        let mateEval = null;
-        let currentTaskId = null;
+      // --- WORKER BOOTSTRAP ---
+      // We define the Module hooks BEFORE the engine script runs
+      const workerLogicPrefix = `
+        self.game = null;
+        self.state = 'IDLE'; 
+        self.solutionMoves = [];
+        self.initialFen = '';
+        self.extractionDepth = 0;
+        self.lastEval = 0;
+        self.mateEval = null;
+        self.currentTaskId = null;
+        self.engineReady = false;
 
-        // Capture Stockfish's message handler before we overwrite it
-        const originalOnMessage = self.onmessage;
-        
-        // Helper to talk to Stockfish engine
-        function sendToEngine(cmd) {
-          if (typeof originalOnMessage === 'function') {
-            originalOnMessage({ data: cmd });
+        self.Module = {
+          print: function(line) {
+            if (typeof line === 'string') {
+               processEngineLine(line);
+            }
+            // Send raw line for evaluation bar
+            self.postMessage({ type: 'RAW_OUTPUT', data: line });
+          },
+          onRuntimeInitialized: function() {
+            self.engineReady = true;
+            // Kickstart UCI
+            self.postMessage('uci');
+            self.postMessage('isready');
           }
-        }
-
-        // Hook into engine output
-        if (typeof Module === 'undefined') self.Module = {};
-        Module.print = function(line) {
-          if (typeof line === 'string') {
-            processEngineLine(line);
-          }
-          // Pass raw lines back to main thread for the eval bar
-          self.postMessage(line);
         };
 
         function processEngineLine(line) {
-          if (state === 'LIVE_EVAL' || state === 'BATCH_EVAL') {
+          if (self.state === 'LIVE_EVAL' || self.state === 'BATCH_EVAL') {
             if (line.startsWith('info depth')) {
               const cpMatch = line.match(/score cp (-?\\d+)/);
-              if (cpMatch) { lastEval = parseInt(cpMatch[1]); mateEval = null; }
+              if (cpMatch) { self.lastEval = parseInt(cpMatch[1]); self.mateEval = null; }
               const mateMatch = line.match(/score mate (-?\\d+)/);
-              if (mateMatch) { mateEval = parseInt(mateMatch[1]); lastEval = mateEval > 0 ? 10000 : -10000; }
+              if (mateMatch) { self.mateEval = parseInt(mateMatch[1]); self.lastEval = self.mateEval > 0 ? 10000 : -10000; }
             }
             if (line.startsWith('bestmove')) {
                const parts = line.split(' ');
                const bestMove = (parts.length > 1 && parts[1] !== '(none)') ? parts[1] : null;
-               self.postMessage({ type: 'EVAL_RESULT_WRAPPED', cp: lastEval, mate: mateEval, taskId: currentTaskId, bestMove: bestMove });
-               state = 'IDLE';
+               self.postMessage({ type: 'EVAL_RESULT_WRAPPED', cp: self.lastEval, mate: self.mateEval, taskId: self.currentTaskId, bestMove: bestMove });
+               self.state = 'IDLE';
             }
-          } else if (state === 'EVAL_INITIAL') {
+          } else if (self.state === 'EVAL_INITIAL') {
             if (line.startsWith('info depth')) {
               const match = line.match(/score cp (-?\\d+)/);
-              if (match) lastEval = parseInt(match[1]);
+              if (match) self.lastEval = parseInt(match[1]);
               const mateMatch = line.match(/score mate (-?\\d+)/);
-              if (mateMatch) lastEval = parseInt(mateMatch[1]) > 0 ? 10000 : -10000;
+              if (mateMatch) self.lastEval = parseInt(mateMatch[1]) > 0 ? 10000 : -10000;
             }
             if (line.startsWith('bestmove')) {
-              if (Math.abs(lastEval) > 400 || Math.abs(lastEval) === 10000) {
+              if (Math.abs(self.lastEval) > 400 || Math.abs(self.lastEval) === 10000) {
                  const parts = line.split(' ');
                  if(parts.length > 1 && parts[1] !== '(none)') {
-                   solutionMoves.push(parts[1]);
-                   game.move(parts[1], {sloppy: true});
-                   extractionDepth = 1;
-                   state = 'EXTRACT_RESPONSE';
-                   sendToEngine('position fen ' + game.fen());
-                   sendToEngine('go depth 10');
+                   self.solutionMoves.push(parts[1]);
+                   self.game.move(parts[1], {sloppy: true});
+                   self.extractionDepth = 1;
+                   self.state = 'EXTRACT_RESPONSE';
+                   self.postMessage('position fen ' + self.game.fen());
+                   self.postMessage('go depth 10');
                    return;
                  }
               }
               startGeneration();
             }
-          } else if (state === 'EXTRACT_RESPONSE' || state === 'EXTRACT_MOVE') {
+          } else if (self.state === 'EXTRACT_RESPONSE' || self.state === 'EXTRACT_MOVE') {
               if (line.startsWith('bestmove')) {
                  const parts = line.split(' ');
                  if(parts.length > 1 && parts[1] !== '(none)') {
-                   solutionMoves.push(parts[1]);
-                   game.move(parts[1], {sloppy: true});
-                   if (extractionDepth < 3 && !game.game_over()) {
-                      extractionDepth++;
-                      state = state === 'EXTRACT_RESPONSE' ? 'EXTRACT_MOVE' : 'EXTRACT_RESPONSE';
-                      sendToEngine('position fen ' + game.fen());
-                      sendToEngine('go depth 10');
+                   self.solutionMoves.push(parts[1]);
+                   self.game.move(parts[1], {sloppy: true});
+                   if (self.extractionDepth < 3 && !self.game.game_over()) {
+                      self.extractionDepth++;
+                      self.state = self.state === 'EXTRACT_RESPONSE' ? 'EXTRACT_MOVE' : 'EXTRACT_RESPONSE';
+                      self.postMessage('position fen ' + self.game.fen());
+                      self.postMessage('go depth 10');
                       return;
                    }
                  }
-                 if (solutionMoves.length >= 2) {
-                    self.postMessage({ type: 'PUZZLE_FOUND_WRAPPED', fen: initialFen, solution: solutionMoves });
+                 if (self.solutionMoves.length >= 2) {
+                    self.postMessage({ type: 'PUZZLE_FOUND_WRAPPED', fen: self.initialFen, solution: self.solutionMoves });
                  } else {
                     startGeneration();
                     return;
                  }
-                 state = 'IDLE';
+                 self.state = 'IDLE';
               }
           }
         }
 
         function generateRandomGame() {
-          game.reset();
-          const numMoves = 12 + Math.floor(Math.random() * 15);
+          self.game.reset();
+          const numMoves = 10 + Math.floor(Math.random() * 15);
           for(let i=0; i<numMoves; i++) {
-            if(game.game_over()) break;
-            const moves = game.moves();
+            if(self.game.game_over()) break;
+            const moves = self.game.moves();
             if(moves.length === 0) break;
-            game.move(moves[Math.floor(Math.random() * moves.length)]);
+            self.game.move(moves[Math.floor(Math.random() * moves.length)]);
           }
-          return game.fen();
+          return self.game.fen();
         }
 
         function startGeneration() {
-          solutionMoves = [];
-          initialFen = generateRandomGame();
-          state = 'EVAL_INITIAL';
-          sendToEngine('position fen ' + initialFen);
-          sendToEngine('go depth 10');
+          if (!self.game) self.game = new Chess();
+          self.solutionMoves = [];
+          self.initialFen = generateRandomGame();
+          self.state = 'EVAL_INITIAL';
+          self.postMessage('position fen ' + self.initialFen);
+          self.postMessage('go depth 10');
         }
 
-        // Handle messages from the main thread
-        self.onmessage = function(e) {
+        // We listen for messages using addEventListener to avoid being overwritten
+        self.addEventListener('message', function(e) {
           if (!e.data) return;
-          
           if (e.data.type === 'GENERATE_PUZZLE') {
             startGeneration();
-            return;
+          } else if (e.data.type === 'EVAL_EVALUATE' || e.data.type === 'BATCH_TASK') {
+            self.state = e.data.type === 'EVAL_EVALUATE' ? 'LIVE_EVAL' : 'BATCH_EVAL';
+            self.currentTaskId = e.data.taskId || null;
+            self.lastEval = 0; self.mateEval = null;
+            self.postMessage('stop');
+            self.postMessage('position fen ' + e.data.fen);
+            self.postMessage('go depth ' + (e.data.depth || 12));
           }
-          if (e.data.type === 'EVAL_EVALUATE' || e.data.type === 'BATCH_TASK') {
-            state = e.data.type === 'EVAL_EVALUATE' ? 'LIVE_EVAL' : 'BATCH_EVAL';
-            currentTaskId = e.data.taskId || null;
-            lastEval = 0; mateEval = null;
-            sendToEngine('stop');
-            sendToEngine('position fen ' + e.data.fen);
-            sendToEngine('go depth ' + (e.data.depth || 12));
-            return;
-          }
-          
-          // Fallback: send directly to original handler if it's a raw command
-          if (typeof originalOnMessage === 'function') originalOnMessage(e);
-        };
-
-        // Initialize UCI
-        setTimeout(() => {
-          sendToEngine('uci');
-          sendToEngine('isready');
-        }, 200);
+        });
       `;
 
-      const blob = new Blob([chessCode, "\n", stockfishCode, "\n", workerLogic], { type: 'application/javascript' });
+      const blob = new Blob([workerLogicPrefix, "\n", chessCode, "\n", stockfishCode], { type: 'application/javascript' });
       const blobUrl = URL.createObjectURL(blob);
 
       for (let i = 0; i < this.poolSize; i++) {
@@ -198,8 +184,8 @@ class EnginePool {
       }
       worker.isBusy = false;
       this.processQueue();
-    } else if (typeof data === 'string') {
-      if (this.onEvalResult) this.onEvalResult(null, null, 'raw', null, data);
+    } else if (data.type === 'RAW_OUTPUT' && typeof data.data === 'string') {
+      if (this.onEvalResult) this.onEvalResult(null, null, 'raw', null, data.data);
     }
   }
 
