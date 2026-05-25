@@ -431,6 +431,9 @@ function startPolling() {
             updateBoard();
             const lastMove = game.history({verbose:true}).pop();
             if (lastMove) {
+              // Force resume audio context on move detection
+              AudioController.init();
+              
               const isCapture = lastMove.flags.includes('c') || lastMove.flags.includes('e');
               if (game.in_check()) AudioController.play('check');
               else if (isCapture) AudioController.play('capture');
@@ -578,6 +581,10 @@ function updateBoard() {
 
   boardEl.style.transform = boardFlipped ? 'rotate(180deg)' : '';
   
+  // Highlighting the last move
+  const history = game.history({ verbose: true });
+  const lastMove = history.length > 0 ? history[history.length - 1] : null;
+
   squares.forEach(sq => {
     const rowIdx = sq.dataset.row;
     const colIdx = sq.dataset.col;
@@ -608,6 +615,12 @@ function updateBoard() {
     }
 
     sq.classList.remove('highlight', 'legal-move', 'in-check', 'premove');
+    
+    // Highlight last move squares
+    if (lastMove && (sq.dataset.square === lastMove.from || sq.dataset.square === lastMove.to)) {
+      sq.classList.add('highlight');
+    }
+
     if (pendingPremove && (sq.dataset.square === pendingPremove.from || sq.dataset.square === pendingPremove.to)) {
       sq.classList.add('premove');
     }
@@ -793,8 +806,17 @@ safeAddListener('btnResign', 'click', function() {
     resignStep = 1;
     setTimeout(() => { this.innerText = "🏳 Resign"; this.style.background = ""; resignStep = 0; }, 3000);
   } else {
-    google.script.run.resignGame(roomId, playerColor);
+    this.innerText = "🏳 Resign";
+    this.style.background = "";
     resignStep = 0;
+    
+    if (gameMode === 'online') {
+      google.script.run
+        .withSuccessHandler(() => { console.log("Resigned successfully"); })
+        .resignGame(roomId, playerColor);
+    } else {
+      handleRemoteGameOver({ result: playerColor === 'w' ? '0-1' : '1-0', reason: (playerColor === 'w' ? 'White' : 'Black') + " resigned" });
+    }
   }
 });
 
