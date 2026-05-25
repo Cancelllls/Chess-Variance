@@ -193,24 +193,86 @@ class EnginePool {
 const enginePool = new EnginePool();
 let puzzleSolution = [];
 let currentPuzzleStep = 0;
+let puzzleBuffer = [];
+
+// Pre-warm the buffer
+setTimeout(() => {
+  enginePool.onPuzzleFound = (fen, solution) => {
+    puzzleBuffer.push({ fen, solution });
+    if (puzzleBuffer.length < 3) enginePool.generate();
+  };
+  enginePool.generate();
+}, 1000);
 
 function startOfflinePuzzle() {
-  document.getElementById('btn-generate-puzzle').innerText = "⏳ Generating... (Parallel Optimized)";
-  
-  enginePool.onPuzzleFound = (fen, solution) => {
-    document.getElementById('btn-generate-puzzle').innerText = "🧩 Generate Offline Puzzle";
-    gameMode = 'puzzle';
-    puzzleSolution = solution; 
-    currentPuzzleStep = 0;
-    game.load(fen);
-    playerColor = game.turn();
-    boardFlipped = (playerColor === 'b');
-    updateBoard();
-    triggerEvaluation();
-    document.getElementById('game-info-panel').innerText = "Puzzle Mode: Find the best move!";
-    closeWelcomeScreen();
-  };
+  if (puzzleBuffer.length > 0) {
+    const p = puzzleBuffer.shift();
+    loadPuzzleData(p.fen, p.solution);
+    // Continue filling buffer
+    enginePool.onPuzzleFound = (f, s) => { 
+      puzzleBuffer.push({ fen: f, solution: s }); 
+      if (puzzleBuffer.length < 3) enginePool.generate();
+    };
+    if (!enginePool.isGenerating) enginePool.generate();
+  } else {
+    document.getElementById('btn-generate-puzzle').innerText = "⏳ Generating... (Parallel Optimized)";
+    enginePool.onPuzzleFound = (fen, solution) => {
+      document.getElementById('btn-generate-puzzle').innerText = "🧩 Puzzles";
+      loadPuzzleData(fen, solution);
+      // Now start buffering the next ones
+      enginePool.onPuzzleFound = (f, s) => { 
+        puzzleBuffer.push({ fen: f, solution: s }); 
+        if (puzzleBuffer.length < 3) enginePool.generate();
+      };
+      if (!enginePool.isGenerating) enginePool.generate();
+    };
+    if (!enginePool.isGenerating) enginePool.generate();
+  }
+}
 
-  enginePool.generate();
+function loadPuzzleData(fen, solution) {
+  gameMode = 'puzzle';
+  puzzleSolution = solution; 
+  currentPuzzleStep = 0;
+  game.load(fen);
+  playerColor = game.turn();
+  boardFlipped = (playerColor === 'b');
+  updateBoard();
+  triggerEvaluation();
+  document.getElementById('game-info-panel').innerText = "Puzzle: Find the best move!";
+  closeWelcomeScreen();
+}
+
+function handlePuzzleMove(move) {
+  const expectedMove = puzzleSolution[currentPuzzleStep];
+  const userMoveStr = move.from + move.to + (move.promotion || '');
+  
+  if (userMoveStr === expectedMove || expectedMove === (move.from + move.to)) {
+    currentPuzzleStep++;
+    if (currentPuzzleStep >= puzzleSolution.length) {
+      document.getElementById('game-info-panel').innerText = "Solved! Next puzzle...";
+      setTimeout(() => startOfflinePuzzle(), 1000);
+    } else {
+      // Computer replies
+      setTimeout(() => {
+        const replyMove = puzzleSolution[currentPuzzleStep];
+        game.move(replyMove, { sloppy: true });
+        updateBoard();
+        AudioController.play('move');
+        currentPuzzleStep++;
+        if (currentPuzzleStep >= puzzleSolution.length) {
+          document.getElementById('game-info-panel').innerText = "Solved! Next puzzle...";
+          setTimeout(() => startOfflinePuzzle(), 1000);
+        }
+      }, 500);
+    }
+  } else {
+    // Wrong move
+    game.undo();
+    updateBoard();
+    const fromEl = document.querySelector(`[data-square="${move.from}"] .piece`);
+    if (fromEl) { fromEl.classList.add('shake'); setTimeout(() => fromEl.classList.remove('shake'), 400); }
+    document.getElementById('game-info-panel').innerText = "Incorrect move, try again.";
+  }
 }
 </script>
