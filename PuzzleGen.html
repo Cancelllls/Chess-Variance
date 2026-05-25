@@ -33,16 +33,23 @@ class EnginePool {
         let mateEval = null;
         let currentTaskId = null;
 
-        // --- ENGINE HOOKING ---
-        // We override Module.print so we can see the engine's output
-        if (typeof Module === 'undefined') self.Module = {};
+        // Capture Stockfish's message handler before we overwrite it
+        const originalOnMessage = self.onmessage;
         
-        const originalPrint = Module.print || ((x) => self.postMessage(x));
+        // Helper to talk to Stockfish engine
+        function sendToEngine(cmd) {
+          if (typeof originalOnMessage === 'function') {
+            originalOnMessage({ data: cmd });
+          }
+        }
+
+        // Hook into engine output
+        if (typeof Module === 'undefined') self.Module = {};
         Module.print = function(line) {
           if (typeof line === 'string') {
             processEngineLine(line);
           }
-          // Always send raw output back to main thread for the eval bar
+          // Pass raw lines back to main thread for the eval bar
           self.postMessage(line);
         };
 
@@ -75,8 +82,8 @@ class EnginePool {
                    game.move(parts[1], {sloppy: true});
                    extractionDepth = 1;
                    state = 'EXTRACT_RESPONSE';
-                   self.postMessage('position fen ' + game.fen());
-                   self.postMessage('go depth 10');
+                   sendToEngine('position fen ' + game.fen());
+                   sendToEngine('go depth 10');
                    return;
                  }
               }
@@ -91,8 +98,8 @@ class EnginePool {
                    if (extractionDepth < 3 && !game.game_over()) {
                       extractionDepth++;
                       state = state === 'EXTRACT_RESPONSE' ? 'EXTRACT_MOVE' : 'EXTRACT_RESPONSE';
-                      self.postMessage('position fen ' + game.fen());
-                      self.postMessage('go depth 10');
+                      sendToEngine('position fen ' + game.fen());
+                      sendToEngine('go depth 10');
                       return;
                    }
                  }
@@ -107,10 +114,9 @@ class EnginePool {
           }
         }
 
-        // --- PUZZLE LOGIC ---
         function generateRandomGame() {
           game.reset();
-          const numMoves = 10 + Math.floor(Math.random() * 20);
+          const numMoves = 12 + Math.floor(Math.random() * 15);
           for(let i=0; i<numMoves; i++) {
             if(game.game_over()) break;
             const moves = game.moves();
@@ -124,14 +130,11 @@ class EnginePool {
           solutionMoves = [];
           initialFen = generateRandomGame();
           state = 'EVAL_INITIAL';
-          self.postMessage('position fen ' + initialFen);
-          self.postMessage('go depth 10');
+          sendToEngine('position fen ' + initialFen);
+          sendToEngine('go depth 10');
         }
 
-        // --- MESSAGE WRAPPING ---
-        // We intercept self.onmessage so we can handle our own control messages
-        // while passing everything else to Stockfish.
-        const originalOnMessage = self.onmessage;
+        // Handle messages from the main thread
         self.onmessage = function(e) {
           if (!e.data) return;
           
@@ -143,22 +146,20 @@ class EnginePool {
             state = e.data.type === 'EVAL_EVALUATE' ? 'LIVE_EVAL' : 'BATCH_EVAL';
             currentTaskId = e.data.taskId || null;
             lastEval = 0; mateEval = null;
-            self.postMessage('stop');
-            self.postMessage('position fen ' + e.data.fen);
-            self.postMessage('go depth ' + (e.data.depth || 12));
+            sendToEngine('stop');
+            sendToEngine('position fen ' + e.data.fen);
+            sendToEngine('go depth ' + (e.data.depth || 12));
             return;
           }
           
-          // Pass-through to Stockfish's real onmessage handler
-          if (typeof originalOnMessage === 'function') {
-            originalOnMessage(e);
-          }
+          // Fallback: send directly to original handler if it's a raw command
+          if (typeof originalOnMessage === 'function') originalOnMessage(e);
         };
 
-        // Trigger UCI handshake
+        // Initialize UCI
         setTimeout(() => {
-          self.postMessage('uci');
-          self.postMessage('isready');
+          sendToEngine('uci');
+          sendToEngine('isready');
         }, 200);
       `;
 
@@ -169,6 +170,7 @@ class EnginePool {
         const worker = new Worker(blobUrl);
         worker.isBusy = false;
         worker.onmessage = (e) => this.handleWorkerMessage(worker, e);
+        worker.onerror = (err) => console.error("Worker Error:", err);
         this.workers.push(worker);
       }
       this.isInitialized = true;
@@ -178,7 +180,6 @@ class EnginePool {
   }
 
   handleWorkerMessage(worker, e) {
-    // Check if it's a raw engine line or a wrapped result
     const data = e.data;
     if (!data) return;
 
@@ -198,7 +199,6 @@ class EnginePool {
       worker.isBusy = false;
       this.processQueue();
     } else if (typeof data === 'string') {
-      // Pass raw lines to global onEvalResult for the eval bar
       if (this.onEvalResult) this.onEvalResult(null, null, 'raw', null, data);
     }
   }
@@ -247,7 +247,7 @@ setTimeout(() => {
     if (puzzleBuffer.length < 3) enginePool.generate();
   };
   enginePool.generate();
-}, 3000);
+}, 4000);
 
 function startOfflinePuzzle() {
   if (typeof isGamePaused !== 'undefined') isGamePaused = false;
