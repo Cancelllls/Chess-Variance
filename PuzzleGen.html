@@ -6,7 +6,7 @@ class EnginePool {
     this.taskQueue = [];
     this.onPuzzleFound = null;
     this.onEvalResult = null;
-    this.callbacks = new Map(); // Support concurrent task IDs
+    this.callbacks = new Map(); 
     this.isGenerating = false;
     this.isInitialized = false;
   }
@@ -14,8 +14,13 @@ class EnginePool {
   initPool() {
     if (this.isInitialized) return;
     try {
-      const chessCode = document.getElementById('chess-engine').innerText;
-      const stockfishCode = document.getElementById('stockfish-engine').innerText;
+      const chessCode = document.getElementById('chess-engine').textContent;
+      const stockfishCode = document.getElementById('stockfish-engine').textContent;
+
+      if (!chessCode || !stockfishCode) {
+        console.error("CRITICAL: Chess or Stockfish source missing!");
+        return;
+      }
 
       const workerLogic = `
         // Worker State
@@ -28,17 +33,12 @@ class EnginePool {
         let mateEval = null;
         let currentTaskId = null;
 
-        // Initialize Stockfish (Emscripten)
-        let engine = typeof STOCKFISH !== "undefined" ? STOCKFISH() : (typeof Stockfish !== "undefined" ? Stockfish() : null);
-        
-        if (engine) {
-          engine.onmessage = (e) => processEngineLine(e.data || e);
-          setTimeout(() => {
-            engine.postMessage('uci');
-            engine.postMessage('setoption name Hash value 32');
-            engine.postMessage('isready');
-          }, 100);
+        function setupUCI() {
+          self.postMessage('uci');
+          self.postMessage('setoption name Hash value 32');
+          self.postMessage('isready');
         }
+        setTimeout(setupUCI, 100);
 
         function processEngineLine(line) {
           if (typeof line !== 'string') return;
@@ -69,8 +69,10 @@ class EnginePool {
                    game.move(parts[1], {sloppy: true});
                    extractionDepth = 1;
                    state = 'EXTRACT_RESPONSE';
-                   engine.postMessage('position fen ' + game.fen());
-                   engine.postMessage('go depth 10');
+                   if (typeof engine !== 'undefined') {
+                     engine.postMessage('position fen ' + game.fen());
+                     engine.postMessage('go depth 10');
+                   }
                    return;
                  }
               }
@@ -85,8 +87,10 @@ class EnginePool {
                    if (extractionDepth < 3 && !game.game_over()) {
                       extractionDepth++;
                       state = state === 'EXTRACT_RESPONSE' ? 'EXTRACT_MOVE' : 'EXTRACT_RESPONSE';
-                      engine.postMessage('position fen ' + game.fen());
-                      engine.postMessage('go depth 10');
+                      if (typeof engine !== 'undefined') {
+                        engine.postMessage('position fen ' + game.fen());
+                        engine.postMessage('go depth 10');
+                      }
                       return;
                    }
                  }
@@ -99,7 +103,7 @@ class EnginePool {
                  state = 'IDLE';
               }
           }
-        };
+        }
 
         function generateRandomGame() {
           game.reset();
@@ -117,10 +121,16 @@ class EnginePool {
           solutionMoves = [];
           initialFen = generateRandomGame();
           state = 'EVAL_INITIAL';
-          if (engine) {
+          if (typeof engine !== 'undefined') {
             engine.postMessage('position fen ' + initialFen);
             engine.postMessage('go depth 10');
           }
+        }
+
+        // Init Engine
+        let engine = typeof STOCKFISH !== "undefined" ? STOCKFISH() : (typeof Stockfish !== "undefined" ? Stockfish() : null);
+        if (engine) {
+          engine.onmessage = (e) => processEngineLine(e.data || e);
         }
 
         self.onmessage = function(e) {
@@ -138,7 +148,7 @@ class EnginePool {
         };
       `;
 
-      const blob = new Blob([chessCode, stockfishCode, workerLogic], { type: 'application/javascript' });
+      const blob = new Blob([chessCode, "\n", stockfishCode, "\n", workerLogic], { type: 'application/javascript' });
       const blobUrl = URL.createObjectURL(blob);
 
       for (let i = 0; i < this.poolSize; i++) {
@@ -195,7 +205,6 @@ class EnginePool {
   evaluate(fen, depth = 12, taskId = null, callback = null) {
     this.initPool();
     if (callback && taskId) this.callbacks.set(taskId, callback);
-    
     if (taskId === 'live') {
       this.taskQueue = this.taskQueue.filter(t => t.taskId !== 'live');
       this.taskQueue.unshift({ type: 'EVAL_EVALUATE', fen, depth, taskId });
@@ -227,18 +236,17 @@ function startOfflinePuzzle() {
   if (puzzleBuffer.length > 0) {
     const p = puzzleBuffer.shift();
     loadPuzzleData(p.fen, p.solution);
-    // Refresh buffer
     enginePool.onPuzzleFound = (f, s) => { 
       puzzleBuffer.push({ fen: f, solution: s }); 
       if (puzzleBuffer.length < 3) enginePool.generate();
     };
     if (!enginePool.isGenerating) enginePool.generate();
   } else {
-    document.getElementById('btn-generate-puzzle').innerText = "⏳ Generating...";
+    const btn = document.getElementById('btn-generate-puzzle');
+    if (btn) btn.innerText = "⏳ Generating...";
     enginePool.onPuzzleFound = (fen, solution) => {
-      document.getElementById('btn-generate-puzzle').innerText = "🧩 Puzzles";
+      if (btn) btn.innerText = "🧩 Puzzles";
       loadPuzzleData(fen, solution);
-      // Resume buffering
       enginePool.onPuzzleFound = (f, s) => { 
         puzzleBuffer.push({ fen: f, solution: s }); 
         if (puzzleBuffer.length < 3) enginePool.generate();
@@ -270,10 +278,10 @@ function handlePuzzleMove(move) {
   if (userMoveStr === expectedMove || expectedMove === (move.from + move.to)) {
     currentPuzzleStep++;
     if (currentPuzzleStep >= puzzleSolution.length) {
-      document.getElementById('game-info-panel').innerText = "Solved! Next puzzle...";
+      const infoEl = document.getElementById('game-info-panel');
+      if (infoEl) infoEl.innerText = "Solved! Next puzzle...";
       setTimeout(() => startOfflinePuzzle(), 1000);
     } else {
-      // Computer replies
       setTimeout(() => {
         const replyMove = puzzleSolution[currentPuzzleStep];
         game.move(replyMove, { sloppy: true });
@@ -281,20 +289,21 @@ function handlePuzzleMove(move) {
         if (typeof AudioController !== 'undefined') AudioController.play('move');
         currentPuzzleStep++;
         if (currentPuzzleStep >= puzzleSolution.length) {
-          document.getElementById('game-info-panel').innerText = "Solved! Next puzzle...";
+          const infoEl = document.getElementById('game-info-panel');
+          if (infoEl) infoEl.innerText = "Solved! Next puzzle...";
           setTimeout(() => startOfflinePuzzle(), 1000);
         }
       }, 500);
     }
   } else {
-    // Wrong move
     game.undo();
     updateBoard();
     if (boardEl) {
       const fromEl = boardEl.querySelector(`[data-square="${move.from}"] .piece`);
       if (fromEl) { fromEl.classList.add('shake'); setTimeout(() => fromEl.classList.remove('shake'), 400); }
     }
-    document.getElementById('game-info-panel').innerText = "Incorrect move, try again.";
+    const infoEl = document.getElementById('game-info-panel');
+    if (infoEl) infoEl.innerText = "Incorrect move, try again.";
   }
 }
 </script>
