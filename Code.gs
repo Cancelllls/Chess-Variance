@@ -112,10 +112,11 @@ function makeMove(gameId, fenString, isGameOver, moveCount, playerColor) {
   try {
     lock.waitLock(10000);
     
-    var res = getGameState(gameId); // This also updates heartbeats/pause status
-    if (!res.success) return res;
-    var state = res.data;
+    var cache = CacheService.getScriptCache();
+    var cachedData = cache.get('chess_state_' + gameId);
+    if (!cachedData) return { success: false, error: "ROOM_EXPIRED" };
     
+    var state = JSON.parse(cachedData);
     if (state.gameOver) return { success: false, error: "GAME_ALREADY_OVER" };
 
     // Update Clocks ONLY if not paused
@@ -136,8 +137,11 @@ function makeMove(gameId, fenString, isGameOver, moveCount, playerColor) {
         }
       }
     }
+    
+    if (playerColor === 'w') state.lastHeartbeatWhite = now;
+    if (playerColor === 'b') state.lastHeartbeatBlack = now;
+    
     state.lastMoveTimestamp = now;
-
     state.fen = fenString;
     state.takebackRequest = null;
     state.drawOffer = null;
@@ -149,7 +153,7 @@ function makeMove(gameId, fenString, isGameOver, moveCount, playerColor) {
        state.gameOver = { result: result, reason: reason };
     }
 
-    CacheService.getScriptCache().put('chess_state_' + gameId, JSON.stringify(state), 21600);
+    cache.put('chess_state_' + gameId, JSON.stringify(state), 21600);
     
     if (state.gameOver) {
       updateLeaderboard(state.whitePlayer, state.blackPlayer, state.gameOver.result);

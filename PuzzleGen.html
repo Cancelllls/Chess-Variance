@@ -1,7 +1,7 @@
 <script>
 class EnginePool {
   constructor() {
-    this.poolSize = navigator.hardwareConcurrency || 4;
+    this.poolSize = Math.min(2, navigator.hardwareConcurrency || 2);
     this.workers = [];
     this.taskQueue = [];
     this.onPuzzleFound = null;

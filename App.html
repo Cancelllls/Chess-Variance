@@ -14,6 +14,8 @@ let roomId = null;
 let pollInterval = null;
 let clockInterval = null;
 let aiDepth = 2;
+let isWaitingForServer = false;
+const errorCallback = (e) => console.warn("Network Warning:", e);
 
 // Clock State
 let whiteTime = 300000;
@@ -361,49 +363,57 @@ function startPolling() {
           const serverHistory = new Chess(state.fen).history();
 
           if (isWaitingForServer && serverHistory.length < currentHistory.length) {
-             return; 
-          }
-          if (serverHistory.length >= currentHistory.length) {
-             isWaitingForServer = false;
-          }
-
-          const isTakebackDetected = serverHistory.length < currentHistory.length && !isWaitingForServer;
-
-          game.load(state.fen);
-
-          if (isTakebackDetected) {
-            pendingPremove = null;
-            boardEl.querySelectorAll('.square.premove').forEach(s => s.classList.remove('premove'));
-            clearHighlights();
-            const undoBtn = document.getElementById('btnUndo');
-            if (undoBtn && undoBtn.innerText === "Proposing...") {
-              undoBtn.innerText = "Undo";
-              undoBtn.disabled = false;
+             // Do nothing. Wait for server to catch up. Polling will continue below.
+          } else {
+            if (serverHistory.length >= currentHistory.length) {
+               isWaitingForServer = false;
             }
-          }
 
-          updateBoard();
-          const lastMove = game.history({verbose:true}).pop();
-          if (lastMove) {
-            const isCapture = lastMove.flags.includes('c') || lastMove.flags.includes('e');
-            if (game.in_check()) AudioController.play('check');
-            else if (isCapture) AudioController.play('capture');
-            else AudioController.play('move');
-          }
+            const isTakebackDetected = serverHistory.length < currentHistory.length && !isWaitingForServer;
 
-          if (pendingPremove && game.turn() === playerColor && !isTakebackActive && playerRole !== 'spectator') {
-            const pm = game.move({ from: pendingPremove.from, to: pendingPremove.to, promotion: 'q' });
-            if (pm) {
-              google.script.run
-                .withFailureHandler(errorCallback)
-                .makeMove(roomId, game.fen(), game.game_over(), game.history().length, playerColor);
-              updateBoard();
-              const isPMCapture = pm.flags.includes('c') || pm.flags.includes('e');
+            game.load(state.fen);
+
+            if (isTakebackDetected) {
+              pendingPremove = null;
+              boardEl.querySelectorAll('.square.premove').forEach(s => s.classList.remove('premove'));
+              clearHighlights();
+              const undoBtn = document.getElementById('btnUndo');
+              if (undoBtn && undoBtn.innerText === "Proposing...") {
+                undoBtn.innerText = "Undo";
+                undoBtn.disabled = false;
+              }
+            }
+
+            updateBoard();
+            const lastMove = game.history({verbose:true}).pop();
+            if (lastMove) {
+              const isCapture = lastMove.flags.includes('c') || lastMove.flags.includes('e');
               if (game.in_check()) AudioController.play('check');
-              else if (isPMCapture) AudioController.play('capture');
+              else if (isCapture) AudioController.play('capture');
               else AudioController.play('move');
             }
-            pendingPremove = null;
+
+            if (pendingPremove && game.turn() === playerColor && !isTakebackActive && playerRole !== 'spectator') {
+              const pm = game.move({ from: pendingPremove.from, to: pendingPremove.to, promotion: 'q' });
+              if (pm) {
+                isWaitingForServer = true;
+                google.script.run
+                  .withSuccessHandler(res => { 
+                     isWaitingForServer = false;
+                     if (res && !res.success) errorCallback(res.error); 
+                  })
+                  .withFailureHandler(err => {
+                     isWaitingForServer = false;
+                     errorCallback(err);
+                  })
+                  .makeMove(roomId, game.fen(), game.game_over(), game.history().length, playerColor);
+                updateBoard();
+                const isPMCapture = pm.flags.includes('c') || pm.flags.includes('e');                if (game.in_check()) AudioController.play('check');
+                else if (isPMCapture) AudioController.play('capture');
+                else AudioController.play('move');
+              }
+              pendingPremove = null;
+            }
           }
         }
         pollInterval = setTimeout(poll, 1200);
@@ -516,7 +526,7 @@ function updateBoard() {
       if (existingPiece.className !== targetClass) {
         existingPiece.className = targetClass;
         const imgKey = piece.color + piece.type.toUpperCase();
-        existingPiece.style.backgroundImage = pieceImages[imgKey] ? `url("${pieceImages[imgKey]}")` : 'none';
+        existingPiece.style.backgroundImage = pieceImages[imgKey] ? `linear-gradient(transparent, transparent), url("${pieceImages[imgKey]}")` : 'none';
       }
       existingPiece.dataset.square = sq.dataset.square;
       existingPiece.style.transform = boardFlipped ? 'rotate(180deg)' : '';
@@ -560,6 +570,7 @@ function updateBoard() {
 function handleSquareClick(e) {
   clearSVG();
   if (gameMode === 'analysis' || playerRole === 'spectator') return;
+  if ((connectionStatus !== 'green' || isGamePaused) && gameMode === 'online') return;
   
   const sq = e.currentTarget.dataset.square;
   if (pendingPremove) {
@@ -667,9 +678,16 @@ function attemptMove(from, to, promo = null) {
     updateBoard();
     
     if (gameMode === 'online') {
+      isWaitingForServer = true;
       google.script.run
-        .withSuccessHandler(res => { if (res && !res.success) errorCallback(res.error); })
-        .withFailureHandler(errorCallback)
+        .withSuccessHandler(res => { 
+           isWaitingForServer = false;
+           if (res && !res.success) errorCallback(res.error); 
+        })
+        .withFailureHandler((err) => {
+           isWaitingForServer = false;
+           errorCallback(err);
+        })
         .makeMove(roomId, game.fen(), game.game_over(), game.history().length, playerColor);
     } else if (gameMode === 'ai' && !game.game_over()) setTimeout(makeAIMove, 250);
     if (game.game_over()) AudioController.play('gameEnd');
