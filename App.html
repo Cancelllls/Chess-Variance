@@ -696,26 +696,50 @@ function updateBoard() {
 
 // --- INTERACTION ---
 function handleSquareClick(e) {
-  if (e.button === 2) return; // Ignore right click for selection
+  if (e.button === 2) return; 
+  e.stopPropagation();
   clearSVG();
+  
   if (gameMode === 'analysis' || playerRole === 'spectator') return;
   if ((connectionStatus !== 'green' || isGamePaused) && gameMode === 'online') return;
   
   const sq = e.currentTarget.dataset.square;
+  const p = game.get(sq);
+  const isOpponentTurn = (gameMode === 'online' && game.turn() !== playerColor);
+
+  // Clear premove if clicking any square while one exists
   if (pendingPremove) {
     pendingPremove = null;
     updateBoard();
     return;
   }
 
-  if (gameMode !== 'local' && game.turn() !== playerColor) return;
-  
+  if (isOpponentTurn) {
+    if (!premoveToggle || !premoveToggle.checked) return;
+    
+    if (selectedSquare) {
+      if (selectedSquare === sq) {
+        selectedSquare = null;
+      } else {
+        pendingPremove = { from: selectedSquare, to: sq };
+        selectedSquare = null;
+      }
+      updateBoard();
+    } else {
+      if (p && p.color === playerColor) {
+        selectedSquare = sq;
+        highlightSquare(sq);
+      }
+    }
+    return;
+  }
+
+  // Normal turn logic
   if (selectedSquare) {
     attemptMove(selectedSquare, sq);
     selectedSquare = null;
     clearHighlights();
   } else {
-    const p = game.get(sq);
     if (p && p.color === game.turn()) {
       selectedSquare = sq;
       highlightSquare(sq);
@@ -725,27 +749,25 @@ function handleSquareClick(e) {
 }
 
 function handleDragStart(e) {
-  clearSVG();
   if (gameMode === 'analysis' || playerRole === 'spectator') { e.preventDefault(); return; }
   
-  // Disable dragging if connection is unstable or game is paused
   if ((connectionStatus !== 'green' || isGamePaused) && gameMode === 'online') {
     e.preventDefault();
     return;
   }
 
-  const isOpponentTurn = (gameMode === 'online' && game.turn() !== playerColor);
   const sq = e.target.dataset.square;
   const p = game.get(sq);
+  const isOpponentTurn = (gameMode === 'online' && game.turn() !== playerColor);
 
   if (isOpponentTurn) {
-    if (!premoveToggle.checked || (p && p.color !== playerColor)) {
+    if (!premoveToggle || !premoveToggle.checked || (p && p.color !== playerColor)) {
       e.preventDefault();
       return;
     }
   } else {
     pendingPremove = null;
-    if (p && p.color !== playerColor) {
+    if (p && p.color !== game.turn()) {
       e.preventDefault();
       return;
     }
@@ -753,7 +775,8 @@ function handleDragStart(e) {
   
   selectedSquare = sq;
   e.dataTransfer.setData('text/plain', selectedSquare);
-  if (!isOpponentTurn) highlightLegalMoves(selectedSquare);
+  // Clear SVG immediately on drag to prevent visual clutter
+  clearSVG();
 }
 
 function handleDrop(e) {
