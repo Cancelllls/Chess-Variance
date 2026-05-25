@@ -4,188 +4,73 @@ class EnginePool {
     this.poolSize = Math.min(2, navigator.hardwareConcurrency || 2);
     this.workers = [];
     this.taskQueue = [];
-    this.onPuzzleFound = null;
-    this.onEvalResult = null;
-    this.callbacks = new Map(); 
-    this.isGenerating = false;
+    this.callbacks = new Map(); // Map taskId -> callback
+    this.onPuzzleFound = null; // Legacy support
+    this.onEvalResult = null;  // Legacy support
     this.isInitialized = false;
+    this.isGenerating = false;
   }
 
   initPool() {
     if (this.isInitialized) return;
     try {
-      const chessCode = document.getElementById('chess-engine').textContent;
       const stockfishCode = document.getElementById('stockfish-engine').textContent;
+      if (!stockfishCode) throw new Error("Stockfish source missing");
 
-      if (!chessCode || !stockfishCode) {
-        console.error("CRITICAL: Chess or Stockfish source missing!");
-        return;
-      }
-
-      // --- WORKER BOOTSTRAP ---
-      // We define the Module hooks BEFORE the engine script runs
-      const workerLogicPrefix = `
-        self.game = null;
-        self.state = 'IDLE'; 
-        self.solutionMoves = [];
-        self.initialFen = '';
-        self.extractionDepth = 0;
-        self.lastEval = 0;
-        self.mateEval = null;
-        self.currentTaskId = null;
-        self.engineReady = false;
-
-        self.Module = {
-          print: function(line) {
-            if (typeof line === 'string') {
-               processEngineLine(line);
-            }
-            // Send raw line for evaluation bar
-            self.postMessage({ type: 'RAW_OUTPUT', data: line });
-          },
-          onRuntimeInitialized: function() {
-            self.engineReady = true;
-            // Kickstart UCI
-            self.postMessage('uci');
-            self.postMessage('isready');
-          }
-        };
-
-        function processEngineLine(line) {
-          if (self.state === 'LIVE_EVAL' || self.state === 'BATCH_EVAL') {
-            if (line.startsWith('info depth')) {
-              const cpMatch = line.match(/score cp (-?\\d+)/);
-              if (cpMatch) { self.lastEval = parseInt(cpMatch[1]); self.mateEval = null; }
-              const mateMatch = line.match(/score mate (-?\\d+)/);
-              if (mateMatch) { self.mateEval = parseInt(mateMatch[1]); self.lastEval = self.mateEval > 0 ? 10000 : -10000; }
-            }
-            if (line.startsWith('bestmove')) {
-               const parts = line.split(' ');
-               const bestMove = (parts.length > 1 && parts[1] !== '(none)') ? parts[1] : null;
-               self.postMessage({ type: 'EVAL_RESULT_WRAPPED', cp: self.lastEval, mate: self.mateEval, taskId: self.currentTaskId, bestMove: bestMove });
-               self.state = 'IDLE';
-            }
-          } else if (self.state === 'EVAL_INITIAL') {
-            if (line.startsWith('info depth')) {
-              const match = line.match(/score cp (-?\\d+)/);
-              if (match) self.lastEval = parseInt(match[1]);
-              const mateMatch = line.match(/score mate (-?\\d+)/);
-              if (mateMatch) self.lastEval = parseInt(mateMatch[1]) > 0 ? 10000 : -10000;
-            }
-            if (line.startsWith('bestmove')) {
-              if (Math.abs(self.lastEval) > 400 || Math.abs(self.lastEval) === 10000) {
-                 const parts = line.split(' ');
-                 if(parts.length > 1 && parts[1] !== '(none)') {
-                   self.solutionMoves.push(parts[1]);
-                   self.game.move(parts[1], {sloppy: true});
-                   self.extractionDepth = 1;
-                   self.state = 'EXTRACT_RESPONSE';
-                   self.postMessage('position fen ' + self.game.fen());
-                   self.postMessage('go depth 10');
-                   return;
-                 }
-              }
-              startGeneration();
-            }
-          } else if (self.state === 'EXTRACT_RESPONSE' || self.state === 'EXTRACT_MOVE') {
-              if (line.startsWith('bestmove')) {
-                 const parts = line.split(' ');
-                 if(parts.length > 1 && parts[1] !== '(none)') {
-                   self.solutionMoves.push(parts[1]);
-                   self.game.move(parts[1], {sloppy: true});
-                   if (self.extractionDepth < 3 && !self.game.game_over()) {
-                      self.extractionDepth++;
-                      self.state = self.state === 'EXTRACT_RESPONSE' ? 'EXTRACT_MOVE' : 'EXTRACT_RESPONSE';
-                      self.postMessage('position fen ' + self.game.fen());
-                      self.postMessage('go depth 10');
-                      return;
-                   }
-                 }
-                 if (self.solutionMoves.length >= 2) {
-                    self.postMessage({ type: 'PUZZLE_FOUND_WRAPPED', fen: self.initialFen, solution: self.solutionMoves });
-                 } else {
-                    startGeneration();
-                    return;
-                 }
-                 self.state = 'IDLE';
-              }
-          }
-        }
-
-        function generateRandomGame() {
-          self.game.reset();
-          const numMoves = 10 + Math.floor(Math.random() * 15);
-          for(let i=0; i<numMoves; i++) {
-            if(self.game.game_over()) break;
-            const moves = self.game.moves();
-            if(moves.length === 0) break;
-            self.game.move(moves[Math.floor(Math.random() * moves.length)]);
-          }
-          return self.game.fen();
-        }
-
-        function startGeneration() {
-          if (!self.game) self.game = new Chess();
-          self.solutionMoves = [];
-          self.initialFen = generateRandomGame();
-          self.state = 'EVAL_INITIAL';
-          self.postMessage('position fen ' + self.initialFen);
-          self.postMessage('go depth 10');
-        }
-
-        // We listen for messages using addEventListener to avoid being overwritten
-        self.addEventListener('message', function(e) {
-          if (!e.data) return;
-          if (e.data.type === 'GENERATE_PUZZLE') {
-            startGeneration();
-          } else if (e.data.type === 'EVAL_EVALUATE' || e.data.type === 'BATCH_TASK') {
-            self.state = e.data.type === 'EVAL_EVALUATE' ? 'LIVE_EVAL' : 'BATCH_EVAL';
-            self.currentTaskId = e.data.taskId || null;
-            self.lastEval = 0; self.mateEval = null;
-            self.postMessage('stop');
-            self.postMessage('position fen ' + e.data.fen);
-            self.postMessage('go depth ' + (e.data.depth || 12));
-          }
-        });
-      `;
-
-      const blob = new Blob([workerLogicPrefix, "\n", chessCode, "\n", stockfishCode], { type: 'application/javascript' });
+      const blob = new Blob([stockfishCode], { type: 'application/javascript' });
       const blobUrl = URL.createObjectURL(blob);
 
       for (let i = 0; i < this.poolSize; i++) {
         const worker = new Worker(blobUrl);
         worker.isBusy = false;
-        worker.onmessage = (e) => this.handleWorkerMessage(worker, e);
-        worker.onerror = (err) => console.error("Worker Error:", err);
+        worker.currentTask = null;
+        worker.lastCp = 0;
+        worker.lastMate = null;
+
+        worker.onmessage = (e) => {
+          const line = e.data;
+          if (typeof line !== 'string') return;
+
+          // Parse Evaluation
+          if (line.startsWith('info depth')) {
+            const cpMatch = line.match(/score cp (-?\\d+)/);
+            if (cpMatch) { worker.lastCp = parseInt(cpMatch[1]); worker.lastMate = null; }
+            const mateMatch = line.match(/score mate (-?\\d+)/);
+            if (mateMatch) { worker.lastMate = parseInt(mateMatch[1]); worker.lastCp = worker.lastMate > 0 ? 10000 : -10000; }
+          }
+
+          // Parse Best Move
+          if (line.startsWith('bestmove')) {
+            const move = line.split(' ')[1];
+            if (worker.currentTask) {
+              const { taskId, callback } = worker.currentTask;
+              if (callback) callback(worker.lastCp, worker.lastMate, taskId, move);
+              else if (this.callbacks.has(taskId)) {
+                this.callbacks.get(taskId)(worker.lastCp, worker.lastMate, taskId, move);
+                this.callbacks.delete(taskId);
+              } else if (this.onEvalResult) {
+                this.onEvalResult(worker.lastCp, worker.lastMate, taskId, move);
+              }
+            }
+            worker.isBusy = false;
+            worker.currentTask = null;
+            this.processQueue();
+          }
+
+          // Raw output for live eval bar
+          if (this.onEvalResult && worker.currentTask?.taskId === 'live') {
+            this.onEvalResult(null, null, 'raw', null, line);
+          }
+        };
+
+        worker.postMessage('uci');
+        worker.postMessage('isready');
         this.workers.push(worker);
       }
       this.isInitialized = true;
+      console.log("AI Engine Pool Ready");
     } catch (e) {
       console.error("EnginePool Init Failed:", e);
-    }
-  }
-
-  handleWorkerMessage(worker, e) {
-    const data = e.data;
-    if (!data) return;
-
-    if (data.type === 'PUZZLE_FOUND_WRAPPED') {
-      if (this.onPuzzleFound) this.onPuzzleFound(data.fen, data.solution);
-      worker.isBusy = false;
-      this.isGenerating = false;
-      this.processQueue();
-    } else if (data.type === 'EVAL_RESULT_WRAPPED') {
-      const { cp, mate, taskId, bestMove } = data;
-      if (taskId && this.callbacks.has(taskId)) {
-        this.callbacks.get(taskId)(cp, mate, taskId, bestMove);
-        this.callbacks.delete(taskId);
-      } else if (this.onEvalResult) {
-        this.onEvalResult(cp, mate, taskId, bestMove);
-      }
-      worker.isBusy = false;
-      this.processQueue();
-    } else if (data.type === 'RAW_OUTPUT' && typeof data.data === 'string') {
-      if (this.onEvalResult) this.onEvalResult(null, null, 'raw', null, data.data);
     }
   }
 
@@ -195,21 +80,18 @@ class EnginePool {
     if (idleWorker) {
       const task = this.taskQueue.shift();
       idleWorker.isBusy = true;
-      idleWorker.postMessage(task);
+      idleWorker.currentTask = task;
+      idleWorker.lastCp = 0;
+      idleWorker.lastMate = null;
+      idleWorker.postMessage('stop');
+      idleWorker.postMessage('position fen ' + task.fen);
+      idleWorker.postMessage('go depth ' + task.depth);
     }
   }
 
-  generate() {
+  evaluate(fen, depth = 10, taskId = null, callback = null) {
     this.initPool();
-    this.isGenerating = true;
-    this.taskQueue.push({ type: 'GENERATE_PUZZLE' });
-    this.processQueue();
-  }
-
-  evaluate(fen, depth = 12, taskId = null, callback = null) {
-    this.initPool();
-    if (callback && taskId) this.callbacks.set(taskId, callback);
-    const task = { type: (taskId === 'live' ? 'EVAL_EVALUATE' : 'BATCH_TASK'), fen, depth, taskId };
+    const task = { fen, depth, taskId, callback };
     if (taskId === 'live' || taskId === 'ai_move') {
       this.taskQueue = this.taskQueue.filter(t => t.taskId !== taskId);
       this.taskQueue.unshift(task);
@@ -217,6 +99,55 @@ class EnginePool {
       this.taskQueue.push(task);
     }
     this.processQueue();
+  }
+
+  // --- FASTER PUZZLE GENERATION ---
+  async generate() {
+    this.isGenerating = true;
+    const tempGame = new Chess();
+    
+    // Play a random opening
+    const plies = 10 + Math.floor(Math.random() * 15);
+    for(let i=0; i<plies; i++) {
+       const moves = tempGame.moves();
+       if (moves.length === 0) break;
+       tempGame.move(moves[Math.floor(Math.random() * moves.length)]);
+    }
+
+    const findTacticalLine = (fen) => {
+      return new Promise(resolve => {
+        this.evaluate(fen, 10, 'gen_puzzle', (cp, mate, tid, move) => {
+          if (Math.abs(cp) > 350 || mate !== null) {
+            // Found a winning position, now extract 3 plies
+            const solution = [move];
+            const p2Game = new Chess(fen);
+            p2Game.move(move);
+            const fen2 = p2Game.fen();
+            
+            this.evaluate(fen2, 10, 'gen_puzzle_step2', (cp2, mate2, tid2, move2) => {
+               if (move2) {
+                 solution.push(move2);
+                 p2Game.move(move2);
+                 this.evaluate(p2Game.fen(), 10, 'gen_puzzle_step3', (cp3, mate3, tid3, move3) => {
+                   if (move3) solution.push(move3);
+                   resolve({ fen, solution });
+                 });
+               } else resolve(null);
+            });
+          } else resolve(null);
+        });
+      });
+    };
+
+    let result = await findTacticalLine(tempGame.fen());
+    if (!result) {
+       // Try again after a short delay to keep UI responsive
+       setTimeout(() => this.generate(), 50);
+       return;
+    }
+
+    if (this.onPuzzleFound) this.onPuzzleFound(result.fen, result.solution);
+    this.isGenerating = false;
   }
 }
 
@@ -233,7 +164,7 @@ setTimeout(() => {
     if (puzzleBuffer.length < 3) enginePool.generate();
   };
   enginePool.generate();
-}, 4000);
+}, 2000);
 
 function startOfflinePuzzle() {
   if (typeof isGamePaused !== 'undefined') isGamePaused = false;
@@ -271,7 +202,7 @@ function loadPuzzleData(fen, solution) {
   playerColor = game.turn();
   boardFlipped = (playerColor === 'b');
   updateBoard();
-  triggerEvaluation(14);
+  triggerEvaluation(12);
   const infoEl = document.getElementById('game-info-panel');
   if (infoEl) infoEl.innerText = "Puzzle: Find the best move!";
 }
