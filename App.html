@@ -548,6 +548,22 @@ function initBoard() {
   }
 }
 
+function updateMoveList() {
+  const hist = game.history();
+  let html = '';
+  for (let i = 0; i < hist.length; i += 2) {
+    html += `<div class="move-row" style="display:grid; grid-template-columns:35px 1fr 1fr; padding:4px 0; border-bottom:1px solid #333;">
+               <span style="color:#666; font-weight:bold;">${Math.floor(i/2)+1}</span>
+               <span>${hist[i]}</span>
+               <span>${hist[i+1]||''}</span>
+             </div>`;
+  }
+  if (moveListEl) {
+    moveListEl.innerHTML = html;
+    moveListEl.scrollTop = moveListEl.scrollHeight;
+  }
+}
+
 function updateBoard() {
   if (!boardEl) {
     boardEl = document.getElementById('board');

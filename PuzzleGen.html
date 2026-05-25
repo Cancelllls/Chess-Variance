@@ -12,148 +12,161 @@ class EnginePool {
 
   initPool() {
     if (this.isInitialized) return;
-    const chessCode = document.getElementById('chess-engine').innerText;
-    const stockfishCode = document.getElementById('stockfish-engine').innerText;
+    try {
+      const chessCode = document.getElementById('chess-engine').innerText;
+      const stockfishCode = document.getElementById('stockfish-engine').innerText;
 
-    const workerScript = `
-      ${chessCode}
-      ${stockfishCode}
+      // Construct worker script using a safer method (parts)
+      const workerLogic = `
+        // Worker State
+        let game = new Chess();
+        let state = 'IDLE'; 
+        let solutionMoves = [];
+        let initialFen = '';
+        let extractionDepth = 0;
+        let lastEval = 0;
+        let mateEval = null;
+        let currentTaskId = null;
 
-      // WASM Memory Optimization & Performance Tuning
-      let stockfish = typeof STOCKFISH !== "undefined" ? STOCKFISH() : Stockfish();
-      
-      let game = new Chess();
-      let state = 'IDLE'; 
-      let solutionMoves = [];
-      let initialFen = '';
-      let extractionDepth = 0;
-      let lastEval = 0;
-      let mateEval = null;
-      let currentTaskId = null;
-
-      // Hardware Acceleration: Hash Memory Allocation
-      stockfish.postMessage('uci');
-      stockfish.postMessage('setoption name Hash value 32');
-      stockfish.postMessage('isready');
-
-      function randomMove() {
-        const moves = game.moves();
-        if(moves.length === 0) return false;
-        const move = moves[Math.floor(Math.random() * moves.length)];
-        game.move(move);
-        return true;
-      }
-
-      function generateRandomGame() {
-        game.reset();
-        const numMoves = 20 + Math.floor(Math.random() * 20);
-        for(let i=0; i<numMoves; i++) {
-          if(game.game_over()) break;
-          randomMove();
+        // UCI initialization logic
+        function setupUCI() {
+          self.postMessage('uci');
+          self.postMessage('setoption name Hash value 32');
+          self.postMessage('isready');
         }
-        return game.fen();
-      }
 
-      stockfish.onmessage = function(event) {
-        const line = event.data || event;
-        
-        if (state === 'LIVE_EVAL' || state === 'BATCH_EVAL') {
-          if (line.startsWith('info depth')) {
-            const cpMatch = line.match(/score cp (-?\\d+)/);
-            if (cpMatch) { lastEval = parseInt(cpMatch[1]); mateEval = null; }
-            const mateMatch = line.match(/score mate (-?\\d+)/);
-            if (mateMatch) { mateEval = parseInt(mateMatch[1]); lastEval = mateEval > 0 ? 10000 : -10000; }
-          }
-          if (line.startsWith('bestmove')) {
-             postMessage({ type: 'EVAL_RESULT', cp: lastEval, mate: mateEval, taskId: currentTaskId });
-             state = 'IDLE';
-          }
-        } else if (state === 'EVAL_INITIAL') {
-          if (line.startsWith('info depth')) {
-            const match = line.match(/score cp (-?\\d+)/);
-            if (match) lastEval = parseInt(match[1]);
-            const mateMatch = line.match(/score mate (-?\\d+)/);
-            if (mateMatch) lastEval = parseInt(mateMatch[1]) > 0 ? 10000 : -10000;
-          }
-          if (line.startsWith('bestmove')) {
-            if (Math.abs(lastEval) > 400 || Math.abs(lastEval) === 10000) {
-               const parts = line.split(' ');
-               if(parts.length > 1 && parts[1] !== '(none)') {
-                 solutionMoves.push(parts[1]);
-                 game.move(parts[1], {sloppy: true});
-                 extractionDepth = 1;
-                 state = 'EXTRACT_RESPONSE';
-                 stockfish.postMessage('position fen ' + game.fen());
-                 stockfish.postMessage('go depth 12');
-                 return;
-               }
+        setTimeout(setupUCI, 100);
+
+        const processEngineLine = (line) => {
+          if (typeof line !== 'string') return;
+          
+          if (state === 'LIVE_EVAL' || state === 'BATCH_EVAL') {
+            if (line.startsWith('info depth')) {
+              const cpMatch = line.match(/score cp (-?\\d+)/);
+              if (cpMatch) { lastEval = parseInt(cpMatch[1]); mateEval = null; }
+              const mateMatch = line.match(/score mate (-?\\d+)/);
+              if (mateMatch) { mateEval = parseInt(mateMatch[1]); lastEval = mateEval > 0 ? 10000 : -10000; }
             }
-            startGeneration();
-          }
-        } else if (state === 'EXTRACT_RESPONSE' || state === 'EXTRACT_MOVE') {
             if (line.startsWith('bestmove')) {
-               const parts = line.split(' ');
-               if(parts.length > 1 && parts[1] !== '(none)') {
-                 solutionMoves.push(parts[1]);
-                 game.move(parts[1], {sloppy: true});
-                 if (extractionDepth < 3 && !game.game_over()) {
-                    extractionDepth++;
-                    state = state === 'EXTRACT_RESPONSE' ? 'EXTRACT_MOVE' : 'EXTRACT_RESPONSE';
-                    stockfish.postMessage('position fen ' + game.fen());
-                    stockfish.postMessage('go depth 12');
-                    return;
-                 }
-               }
-               postMessage({ type: 'PUZZLE_FOUND', fen: initialFen, solution: solutionMoves });
+               self.postMessage({ type: 'EVAL_RESULT', cp: lastEval, mate: mateEval, taskId: currentTaskId });
                state = 'IDLE';
             }
-        }
-      };
+          } else if (state === 'EVAL_INITIAL') {
+            if (line.startsWith('info depth')) {
+              const match = line.match(/score cp (-?\\d+)/);
+              if (match) lastEval = parseInt(match[1]);
+              const mateMatch = line.match(/score mate (-?\\d+)/);
+              if (mateMatch) lastEval = parseInt(mateMatch[1]) > 0 ? 10000 : -10000;
+            }
+            if (line.startsWith('bestmove')) {
+              if (Math.abs(lastEval) > 400 || Math.abs(lastEval) === 10000) {
+                 const parts = line.split(' ');
+                 if(parts.length > 1 && parts[1] !== '(none)') {
+                   solutionMoves.push(parts[1]);
+                   game.move(parts[1], {sloppy: true});
+                   extractionDepth = 1;
+                   state = 'EXTRACT_RESPONSE';
+                   self.postMessage('position fen ' + game.fen());
+                   self.postMessage('go depth 10');
+                   return;
+                 }
+              }
+              startGeneration();
+            }
+          } else if (state === 'EXTRACT_RESPONSE' || state === 'EXTRACT_MOVE') {
+              if (line.startsWith('bestmove')) {
+                 const parts = line.split(' ');
+                 if(parts.length > 1 && parts[1] !== '(none)') {
+                   solutionMoves.push(parts[1]);
+                   game.move(parts[1], {sloppy: true});
+                   if (extractionDepth < 3 && !game.game_over()) {
+                      extractionDepth++;
+                      state = state === 'EXTRACT_RESPONSE' ? 'EXTRACT_MOVE' : 'EXTRACT_RESPONSE';
+                      self.postMessage('position fen ' + game.fen());
+                      self.postMessage('go depth 10');
+                      return;
+                   }
+                 }
+                 if (solutionMoves.length >= 2) {
+                    self.postMessage({ type: 'PUZZLE_FOUND', fen: initialFen, solution: solutionMoves });
+                 } else {
+                    startGeneration();
+                    return;
+                 }
+                 state = 'IDLE';
+              }
+          }
+        };
 
-      function startGeneration() {
-        state = 'SEED';
-        solutionMoves = [];
-        initialFen = generateRandomGame();
-        state = 'EVAL_INITIAL';
-        stockfish.postMessage('position fen ' + initialFen);
-        stockfish.postMessage('go depth 12');
+        function generateRandomGame() {
+          game.reset();
+          const numMoves = 15 + Math.floor(Math.random() * 20);
+          for(let i=0; i<numMoves; i++) {
+            if(game.game_over()) break;
+            const moves = game.moves();
+            if(moves.length === 0) break;
+            game.move(moves[Math.floor(Math.random() * moves.length)]);
+          }
+          return game.fen();
+        }
+
+        function startGeneration() {
+          solutionMoves = [];
+          initialFen = generateRandomGame();
+          state = 'EVAL_INITIAL';
+          self.postMessage('position fen ' + initialFen);
+          self.postMessage('go depth 10');
+        }
+
+        // Intercept self.onmessage to handle both control and engine output
+        const originalOnMessage = self.onmessage;
+        self.onmessage = function(e) {
+          if (!e.data) return;
+          if (e.data.type === 'GENERATE_PUZZLE') {
+            startGeneration();
+          } else if (e.data.type === 'EVAL_EVALUATE' || e.data.type === 'BATCH_TASK') {
+            state = e.data.type === 'EVAL_EVALUATE' ? 'LIVE_EVAL' : 'BATCH_EVAL';
+            currentTaskId = e.data.taskId || null;
+            lastEval = 0; mateEval = null;
+            self.postMessage('stop');
+            self.postMessage('position fen ' + e.data.fen);
+            self.postMessage('go depth ' + (e.data.depth || 12));
+          } else if (typeof e.data === 'string') {
+            processEngineLine(e.data);
+          }
+        };
+      `;
+
+      const blob = new Blob([chessCode, stockfishCode, workerLogic], { type: 'application/javascript' });
+      const blobUrl = URL.createObjectURL(blob);
+
+      for (let i = 0; i < this.poolSize; i++) {
+        const worker = new Worker(blobUrl);
+        worker.isBusy = false;
+        worker.onmessage = (e) => this.handleWorkerMessage(worker, e);
+        worker.onerror = (err) => console.error("Worker Error:", err);
+        this.workers.push(worker);
       }
-
-      onmessage = function(e) {
-        if (e.data && e.data.type === 'GENERATE_PUZZLE') {
-          startGeneration();
-        } else if (e.data && (e.data.type === 'EVALUATE' || e.data.type === 'BATCH_TASK')) {
-          state = e.data.type === 'EVALUATE' ? 'LIVE_EVAL' : 'BATCH_EVAL';
-          currentTaskId = e.data.taskId || null;
-          lastEval = 0;
-          mateEval = null;
-          stockfish.postMessage('stop');
-          stockfish.postMessage('position fen ' + e.data.fen);
-          stockfish.postMessage('go depth ' + (e.data.depth || 14));
-        }
-      };
-    `;
-
-    const blob = new Blob([workerScript], { type: 'application/javascript' });
-    const blobUrl = URL.createObjectURL(blob);
-
-    for (let i = 0; i < this.poolSize; i++) {
-      const worker = new Worker(blobUrl);
-      worker.isBusy = false;
-      worker.onmessage = (e) => this.handleWorkerMessage(worker, e);
-      this.workers.push(worker);
+      this.isInitialized = true;
+    } catch (e) {
+      console.error("EnginePool Init Failed:", e);
     }
-    this.isInitialized = true;
   }
 
   handleWorkerMessage(worker, e) {
-    if (e.data && e.data.type === 'PUZZLE_FOUND') {
-      if (this.onPuzzleFound) this.onPuzzleFound(e.data.fen, e.data.solution);
+    if (!e.data || typeof e.data !== 'object') return;
+    
+    if (e.data.type === 'PUZZLE_FOUND') {
+      try {
+        if (this.onPuzzleFound) this.onPuzzleFound(e.data.fen, e.data.solution);
+      } catch (err) { console.error("onPuzzleFound Error:", err); }
       worker.isBusy = false;
       this.isGenerating = false;
       this.processQueue();
-    } else if (e.data && e.data.type === 'EVAL_RESULT') {
-      if (this.onEvalResult) this.onEvalResult(e.data.cp, e.data.mate, e.data.taskId);
+    } else if (e.data.type === 'EVAL_RESULT') {
+      try {
+        if (this.onEvalResult) this.onEvalResult(e.data.cp, e.data.mate, e.data.taskId);
+      } catch (err) { console.error("onEvalResult Error:", err); }
       worker.isBusy = false;
       this.processQueue();
     }
@@ -170,18 +183,17 @@ class EnginePool {
   }
 
   generate() {
-    this.isGenerating = true;
     this.initPool();
+    this.isGenerating = true;
     this.taskQueue.push({ type: 'GENERATE_PUZZLE' });
     this.processQueue();
   }
 
-  evaluate(fen, depth = 14, taskId = null) {
+  evaluate(fen, depth = 12, taskId = null) {
     this.initPool();
-    // Live eval bar takes priority - clear queue if it's a live eval
     if (taskId === 'live') {
-      this.taskQueue = this.taskQueue.filter(t => t.type !== 'EVALUATE');
-      this.taskQueue.unshift({ type: 'EVALUATE', fen, depth, taskId });
+      this.taskQueue = this.taskQueue.filter(t => t.type !== 'EVAL_EVALUATE');
+      this.taskQueue.unshift({ type: 'EVAL_EVALUATE', fen, depth, taskId });
     } else {
       this.taskQueue.push({ type: 'BATCH_TASK', fen, depth, taskId });
     }
@@ -202,24 +214,26 @@ setTimeout(() => {
     if (puzzleBuffer.length < 3) enginePool.generate();
   };
   enginePool.generate();
-}, 1000);
+}, 2000);
 
 function startOfflinePuzzle() {
+  if (typeof isGamePaused !== 'undefined') isGamePaused = false;
+  
   if (puzzleBuffer.length > 0) {
     const p = puzzleBuffer.shift();
     loadPuzzleData(p.fen, p.solution);
-    // Continue filling buffer
+    // Refresh buffer
     enginePool.onPuzzleFound = (f, s) => { 
       puzzleBuffer.push({ fen: f, solution: s }); 
       if (puzzleBuffer.length < 3) enginePool.generate();
     };
     if (!enginePool.isGenerating) enginePool.generate();
   } else {
-    document.getElementById('btn-generate-puzzle').innerText = "⏳ Generating... (Parallel Optimized)";
+    document.getElementById('btn-generate-puzzle').innerText = "⏳ Generating...";
     enginePool.onPuzzleFound = (fen, solution) => {
       document.getElementById('btn-generate-puzzle').innerText = "🧩 Puzzles";
       loadPuzzleData(fen, solution);
-      // Now start buffering the next ones
+      // Resume buffering
       enginePool.onPuzzleFound = (f, s) => { 
         puzzleBuffer.push({ fen: f, solution: s }); 
         if (puzzleBuffer.length < 3) enginePool.generate();
@@ -238,7 +252,7 @@ function loadPuzzleData(fen, solution) {
   playerColor = game.turn();
   boardFlipped = (playerColor === 'b');
   updateBoard();
-  triggerEvaluation();
+  triggerEvaluation(14);
   document.getElementById('game-info-panel').innerText = "Puzzle: Find the best move!";
   closeWelcomeScreen();
 }
@@ -258,7 +272,7 @@ function handlePuzzleMove(move) {
         const replyMove = puzzleSolution[currentPuzzleStep];
         game.move(replyMove, { sloppy: true });
         updateBoard();
-        AudioController.play('move');
+        if (typeof AudioController !== 'undefined') AudioController.play('move');
         currentPuzzleStep++;
         if (currentPuzzleStep >= puzzleSolution.length) {
           document.getElementById('game-info-panel').innerText = "Solved! Next puzzle...";
@@ -270,8 +284,10 @@ function handlePuzzleMove(move) {
     // Wrong move
     game.undo();
     updateBoard();
-    const fromEl = document.querySelector(`[data-square="${move.from}"] .piece`);
-    if (fromEl) { fromEl.classList.add('shake'); setTimeout(() => fromEl.classList.remove('shake'), 400); }
+    if (boardEl) {
+      const fromEl = boardEl.querySelector(`[data-square="${move.from}"] .piece`);
+      if (fromEl) { fromEl.classList.add('shake'); setTimeout(() => fromEl.classList.remove('shake'), 400); }
+    }
     document.getElementById('game-info-panel').innerText = "Incorrect move, try again.";
   }
 }
