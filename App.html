@@ -706,7 +706,7 @@ function attemptMove(from, to, promo = null) {
 
 // --- BUTTONS ---
 let resignStep = 0;
-document.getElementById('btnResign').addEventListener('click', function() {
+safeAddListener('btnResign', 'click', function() {
   if (playerRole === 'spectator') return;
   if (resignStep === 0) {
     this.innerText = "Sure?";
@@ -719,24 +719,24 @@ document.getElementById('btnResign').addEventListener('click', function() {
   }
 });
 
-document.getElementById('btnDraw').addEventListener('click', function() {
+safeAddListener('btnDraw', 'click', function() {
   if (playerRole === 'spectator') return;
   this.disabled = true;
   this.innerText = "Draw Offered...";
   google.script.run.offerDraw(roomId, playerColor);
 });
 
-document.getElementById('btnAcceptDraw').addEventListener('click', () => {
+safeAddListener('btnAcceptDraw', 'click', () => {
   document.getElementById('draw-toast').classList.add('hidden');
   google.script.run.resolveDraw(roomId, true);
 });
 
-document.getElementById('btnDeclineDraw').addEventListener('click', () => {
+safeAddListener('btnDeclineDraw', 'click', () => {
   document.getElementById('draw-toast').classList.add('hidden');
   google.script.run.resolveDraw(roomId, false);
 });
 
-document.getElementById('btnUndo').addEventListener('click', () => {
+safeAddListener('btnUndo', 'click', () => {
   if (playerRole === 'spectator') return;
   if (gameMode === 'online') { 
     if (game.history().length === 0) return;
@@ -753,13 +753,13 @@ document.getElementById('btnUndo').addEventListener('click', () => {
   game.undo(); if (gameMode === 'ai') game.undo(); updateBoard();
 });
 
-document.getElementById('btnAcceptTakeback').addEventListener('click', () => {
+safeAddListener('btnAcceptTakeback', 'click', () => {
   game.undo(); pendingPremove = null; clearHighlights(); updateBoard();
   document.getElementById('takeback-toast').classList.add('hidden');
   google.script.run.resolveTakeback(roomId, true, game.fen());
 });
 
-document.getElementById('btnDeclineTakeback').addEventListener('click', () => {
+safeAddListener('btnDeclineTakeback', 'click', () => {
   document.getElementById('takeback-toast').classList.add('hidden');
   google.script.run.resolveTakeback(roomId, false, null);
 });
@@ -894,16 +894,21 @@ function goToAnalysisStep(index) {
   triggerEvaluation(16);
 }
 
-document.getElementById('btnReview').addEventListener('click', startAnalysisMode);
-document.getElementById('btnPrevMove').addEventListener('click', () => goToAnalysisStep(analysisIndex - 1));
-document.getElementById('btnNextMove').addEventListener('click', () => goToAnalysisStep(analysisIndex + 1));
-document.getElementById('btnExitAnalysis').addEventListener('click', exitAnalysisMode);
-document.getElementById('btnMenu').addEventListener('click', openWelcomeScreen);
-document.getElementById('btnFlip').addEventListener('click', () => { boardFlipped = !boardFlipped; updateBoard(); });
-document.getElementById('btnTheme').addEventListener('click', () => { document.body.classList.toggle('theme-light'); document.body.classList.toggle('theme-dark'); });
-document.getElementById('btnSave').addEventListener('click', () => { const pgn = game.pgn(); google.script.run.withSuccessHandler(res => { if (res && res.success) alert('Saved!'); else alert('Cloud save failed.'); }).withFailureHandler(() => { localStorage.setItem('chess_save', pgn); alert('Saved locally.'); }).saveGame(pgn); });
-document.getElementById('btnLoad').addEventListener('click', () => { google.script.run.withSuccessHandler(res => { if (res && res.success && res.data) { game.load_pgn(res.data); updateBoard(); } else { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } } }).withFailureHandler(() => { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } }).loadGame(); });
-document.getElementById('btnExport').addEventListener('click', () => { const blob = new Blob([game.pgn()], {type: "text/plain;charset=utf-8"}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'game.pgn'; a.click(); });
+function safeAddListener(id, event, handler) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener(event, handler);
+}
+
+safeAddListener('btnReview', 'click', startAnalysisMode);
+safeAddListener('btnPrevMove', 'click', () => goToAnalysisStep(analysisIndex - 1));
+safeAddListener('btnNextMove', 'click', () => goToAnalysisStep(analysisIndex + 1));
+safeAddListener('btnExitAnalysis', 'click', exitAnalysisMode);
+safeAddListener('btnMenu', 'click', openWelcomeScreen);
+safeAddListener('btnFlip', 'click', () => { boardFlipped = !boardFlipped; updateBoard(); });
+safeAddListener('btnTheme', 'click', () => { document.body.classList.toggle('theme-light'); document.body.classList.toggle('theme-dark'); });
+safeAddListener('btnSave', 'click', () => { const pgn = game.pgn(); google.script.run.withSuccessHandler(res => { if (res && res.success) alert('Saved!'); else alert('Cloud save failed.'); }).withFailureHandler(() => { localStorage.setItem('chess_save', pgn); alert('Saved locally.'); }).saveGame(pgn); });
+safeAddListener('btnLoad', 'click', () => { google.script.run.withSuccessHandler(res => { if (res && res.success && res.data) { game.load_pgn(res.data); updateBoard(); } else { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } } }).withFailureHandler(() => { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } }).loadGame(); });
+safeAddListener('btnExport', 'click', () => { const blob = new Blob([game.pgn()], {type: "text/plain;charset=utf-8"}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'game.pgn'; a.click(); });
 
 document.addEventListener('DOMContentLoaded', () => { 
   initBoard(); 
