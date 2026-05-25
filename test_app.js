@@ -1,4 +1,4 @@
-<script>
+
 // Game State
 let game = new Chess();
 let boardFlipped = false;
@@ -24,12 +24,16 @@ let lastServerSync = Date.now();
 let isGamePaused = false;
 
 // DOM Elements
-let boardEl, moveListEl, promoDialog, premoveToggle, svgLayer;
+const boardEl = document.getElementById('board');
+const moveListEl = document.getElementById('move-list');
+const promoDialog = document.getElementById('promotion-dialog');
 let pendingMove = null;
 let selectedSquare = null;
 
 // Premove & SVG State
 let pendingPremove = null;
+const premoveToggle = document.getElementById('premove-toggle');
+const svgLayer = document.getElementById('svg-draw-layer');
 let isRightClickDragging = false;
 let rightClickStartSq = null;
 let currentRightClickSq = null;
@@ -99,12 +103,10 @@ function setConnectionStatus(status) {
   if (dot) dot.className = 'conn-dot ' + status;
   
   // Show reconnecting modal for any non-green status
-  if (modal) {
-    if (status === 'yellow' || status === 'red') {
-      modal.classList.remove('hidden');
-    } else {
-      modal.classList.add('hidden');
-    }
+  if (status === 'yellow' || status === 'red') {
+    modal.classList.remove('hidden');
+  } else {
+    modal.classList.add('hidden');
   }
 }
 
@@ -159,17 +161,9 @@ function showMenu(id) {
 
 function closeWelcomeScreen() {
   playerName = document.getElementById('player-name-input').value || "Guest";
-  const ws = document.getElementById('welcome-screen');
-  if (ws) {
-    ws.classList.add('hidden');
-    ws.style.setProperty('display', 'none', 'important');
-  }
-  const mainApp = document.getElementById('main-app');
-  if (mainApp) {
-    mainApp.classList.remove('hidden');
-    mainApp.style.filter = 'none';
-    mainApp.style.pointerEvents = 'auto';
-  }
+  document.getElementById('welcome-screen').classList.add('hidden');
+  document.getElementById('main-app').style.filter = 'none';
+  document.getElementById('main-app').style.pointerEvents = 'auto';
   if (clockInterval) clearInterval(clockInterval);
   clockInterval = setInterval(updateClocks, 1000);
 }
@@ -177,21 +171,13 @@ function closeWelcomeScreen() {
 function openWelcomeScreen() {
   if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
   if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
-  const ws = document.getElementById('welcome-screen');
-  if (ws) {
-    ws.classList.remove('hidden');
-    ws.style.removeProperty('display');
-  }
-  const mainApp = document.getElementById('main-app');
-  if (mainApp) {
-    mainApp.style.filter = 'blur(5px)';
-    mainApp.style.pointerEvents = 'none';
-  }
+  document.getElementById('welcome-screen').classList.remove('hidden');
+  document.getElementById('main-app').style.filter = 'blur(5px)';
+  document.getElementById('main-app').style.pointerEvents = 'none';
   showMenu('menu-main');
   roomId = null;
   playerRole = 'player';
-  const badge = document.getElementById('spectator-badge');
-  if (badge) badge.classList.add('hidden');
+  document.getElementById('spectator-badge').classList.add('hidden');
   setConnectionStatus('green');
   const overlay = boardEl.querySelector('.game-over-overlay');
   if (overlay) overlay.remove();
@@ -720,7 +706,7 @@ function attemptMove(from, to, promo = null) {
 
 // --- BUTTONS ---
 let resignStep = 0;
-safeAddListener('btnResign', 'click', function() {
+document.getElementById('btnResign').addEventListener('click', function() {
   if (playerRole === 'spectator') return;
   if (resignStep === 0) {
     this.innerText = "Sure?";
@@ -733,24 +719,24 @@ safeAddListener('btnResign', 'click', function() {
   }
 });
 
-safeAddListener('btnDraw', 'click', function() {
+document.getElementById('btnDraw').addEventListener('click', function() {
   if (playerRole === 'spectator') return;
   this.disabled = true;
   this.innerText = "Draw Offered...";
   google.script.run.offerDraw(roomId, playerColor);
 });
 
-safeAddListener('btnAcceptDraw', 'click', () => {
+document.getElementById('btnAcceptDraw').addEventListener('click', () => {
   document.getElementById('draw-toast').classList.add('hidden');
   google.script.run.resolveDraw(roomId, true);
 });
 
-safeAddListener('btnDeclineDraw', 'click', () => {
+document.getElementById('btnDeclineDraw').addEventListener('click', () => {
   document.getElementById('draw-toast').classList.add('hidden');
   google.script.run.resolveDraw(roomId, false);
 });
 
-safeAddListener('btnUndo', 'click', () => {
+document.getElementById('btnUndo').addEventListener('click', () => {
   if (playerRole === 'spectator') return;
   if (gameMode === 'online') { 
     if (game.history().length === 0) return;
@@ -767,13 +753,13 @@ safeAddListener('btnUndo', 'click', () => {
   game.undo(); if (gameMode === 'ai') game.undo(); updateBoard();
 });
 
-safeAddListener('btnAcceptTakeback', 'click', () => {
+document.getElementById('btnAcceptTakeback').addEventListener('click', () => {
   game.undo(); pendingPremove = null; clearHighlights(); updateBoard();
   document.getElementById('takeback-toast').classList.add('hidden');
   google.script.run.resolveTakeback(roomId, true, game.fen());
 });
 
-safeAddListener('btnDeclineTakeback', 'click', () => {
+document.getElementById('btnDeclineTakeback').addEventListener('click', () => {
   document.getElementById('takeback-toast').classList.add('hidden');
   google.script.run.resolveTakeback(roomId, false, null);
 });
@@ -908,32 +894,21 @@ function goToAnalysisStep(index) {
   triggerEvaluation(16);
 }
 
-function safeAddListener(id, event, handler) {
-  const el = document.getElementById(id);
-  if (el) el.addEventListener(event, handler);
-}
-
-safeAddListener('btnReview', 'click', startAnalysisMode);
-safeAddListener('btnPrevMove', 'click', () => goToAnalysisStep(analysisIndex - 1));
-safeAddListener('btnNextMove', 'click', () => goToAnalysisStep(analysisIndex + 1));
-safeAddListener('btnExitAnalysis', 'click', exitAnalysisMode);
-safeAddListener('btnMenu', 'click', openWelcomeScreen);
-safeAddListener('btnFlip', 'click', () => { boardFlipped = !boardFlipped; updateBoard(); });
-safeAddListener('btnTheme', 'click', () => { document.body.classList.toggle('theme-light'); document.body.classList.toggle('theme-dark'); });
-safeAddListener('btnSave', 'click', () => { const pgn = game.pgn(); google.script.run.withSuccessHandler(res => { if (res && res.success) alert('Saved!'); else alert('Cloud save failed.'); }).withFailureHandler(() => { localStorage.setItem('chess_save', pgn); alert('Saved locally.'); }).saveGame(pgn); });
-safeAddListener('btnLoad', 'click', () => { google.script.run.withSuccessHandler(res => { if (res && res.success && res.data) { game.load_pgn(res.data); updateBoard(); } else { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } } }).withFailureHandler(() => { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } }).loadGame(); });
-safeAddListener('btnExport', 'click', () => { const blob = new Blob([game.pgn()], {type: "text/plain;charset=utf-8"}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'game.pgn'; a.click(); });
+document.getElementById('btnReview').addEventListener('click', startAnalysisMode);
+document.getElementById('btnPrevMove').addEventListener('click', () => goToAnalysisStep(analysisIndex - 1));
+document.getElementById('btnNextMove').addEventListener('click', () => goToAnalysisStep(analysisIndex + 1));
+document.getElementById('btnExitAnalysis').addEventListener('click', exitAnalysisMode);
+document.getElementById('btnMenu').addEventListener('click', openWelcomeScreen);
+document.getElementById('btnFlip').addEventListener('click', () => { boardFlipped = !boardFlipped; updateBoard(); });
+document.getElementById('btnTheme').addEventListener('click', () => { document.body.classList.toggle('theme-light'); document.body.classList.toggle('theme-dark'); });
+document.getElementById('btnSave').addEventListener('click', () => { const pgn = game.pgn(); google.script.run.withSuccessHandler(res => { if (res && res.success) alert('Saved!'); else alert('Cloud save failed.'); }).withFailureHandler(() => { localStorage.setItem('chess_save', pgn); alert('Saved locally.'); }).saveGame(pgn); });
+document.getElementById('btnLoad').addEventListener('click', () => { google.script.run.withSuccessHandler(res => { if (res && res.success && res.data) { game.load_pgn(res.data); updateBoard(); } else { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } } }).withFailureHandler(() => { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } }).loadGame(); });
+document.getElementById('btnExport').addEventListener('click', () => { const blob = new Blob([game.pgn()], {type: "text/plain;charset=utf-8"}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'game.pgn'; a.click(); });
 
 document.addEventListener('DOMContentLoaded', () => { 
-  boardEl = document.getElementById('board');
-  moveListEl = document.getElementById('move-list');
-  promoDialog = document.getElementById('promotion-dialog');
-  premoveToggle = document.getElementById('premove-toggle');
-  svgLayer = document.getElementById('svg-draw-layer');
-
   initBoard(); 
   document.getElementById('welcome-screen').classList.remove('hidden'); 
-  boardEl.addEventListener('dblclick', function(e) { e.preventDefault(); }, { passive: false });
+  document.getElementById('board').addEventListener('dblclick', function(e) { e.preventDefault(); }, { passive: false });
   
   // Right-Click Arrow Drawing
   boardEl.addEventListener('contextmenu', e => e.preventDefault());
@@ -972,4 +947,3 @@ function getSquareFromEvent(e) {
   return String.fromCharCode(97 + c) + (8 - r);
 }
 
-</script>
