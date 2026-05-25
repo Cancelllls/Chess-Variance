@@ -51,7 +51,9 @@ class EnginePool {
               if (mateMatch) { mateEval = parseInt(mateMatch[1]); lastEval = mateEval > 0 ? 10000 : -10000; }
             }
             if (line.startsWith('bestmove')) {
-               self.postMessage({ type: 'EVAL_RESULT', cp: lastEval, mate: mateEval, taskId: currentTaskId });
+               const parts = line.split(' ');
+               const bestMove = (parts.length > 1 && parts[1] !== '(none)') ? parts[1] : null;
+               self.postMessage({ type: 'EVAL_RESULT', cp: lastEval, mate: mateEval, taskId: currentTaskId, bestMove: bestMove });
                state = 'IDLE';
             }
           } else if (state === 'EVAL_INITIAL') {
@@ -173,12 +175,12 @@ class EnginePool {
       this.isGenerating = false;
       this.processQueue();
     } else if (e.data.type === 'EVAL_RESULT') {
-      const { cp, mate, taskId } = e.data;
+      const { cp, mate, taskId, bestMove } = e.data;
       if (taskId && this.callbacks.has(taskId)) {
-        this.callbacks.get(taskId)(cp, mate, taskId);
+        this.callbacks.get(taskId)(cp, mate, taskId, bestMove);
         this.callbacks.delete(taskId);
       } else if (this.onEvalResult) {
-        this.onEvalResult(cp, mate, taskId);
+        this.onEvalResult(cp, mate, taskId, bestMove);
       }
       worker.isBusy = false;
       this.processQueue();
