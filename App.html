@@ -158,21 +158,25 @@ function showMenu(id) {
 }
 
 function closeWelcomeScreen() {
-  console.log("Closing welcome screen...");
+  console.log("Force-closing welcome screen...");
   try {
     const nameEl = document.getElementById('player-name-input');
     playerName = (nameEl && nameEl.value) ? nameEl.value.trim() : "Guest";
     
     const ws = document.getElementById('welcome-screen');
     const mainApp = document.getElementById('main-app');
+    const waitOverlay = document.getElementById('waiting-overlay');
     
     if (ws) {
       ws.style.setProperty('display', 'none', 'important');
       ws.style.setProperty('visibility', 'hidden', 'important');
       ws.style.setProperty('opacity', '0', 'important');
+      ws.style.setProperty('z-index', '-1', 'important');
       ws.classList.add('hidden');
     }
     
+    if (waitOverlay) waitOverlay.classList.add('hidden');
+
     if (mainApp) {
       mainApp.style.setProperty('display', 'flex', 'important');
       mainApp.style.setProperty('visibility', 'visible', 'important');
@@ -184,9 +188,9 @@ function closeWelcomeScreen() {
     
     if (clockInterval) clearInterval(clockInterval);
     clockInterval = setInterval(updateClocks, 1000);
-    console.log("Welcome screen closed.");
+    console.log("Main App Visible.");
   } catch (e) {
-    console.error("FATAL: closeWelcomeScreen failed", e);
+    console.error("CRITICAL: closeWelcomeScreen failed", e);
   }
 }
 
@@ -545,14 +549,27 @@ function initBoard() {
 }
 
 function updateBoard() {
+  if (!boardEl) {
+    boardEl = document.getElementById('board');
+    if (!boardEl) return;
+  }
+  
   const b = game.board();
   const squares = boardEl.querySelectorAll('.square');
+  if (!squares || squares.length === 0) return;
+
   boardEl.style.transform = boardFlipped ? 'rotate(180deg)' : '';
+  
   squares.forEach(sq => {
-    const r = parseInt(sq.dataset.row);
-    const c = parseInt(sq.dataset.col);
+    const rowIdx = sq.dataset.row;
+    const colIdx = sq.dataset.col;
+    if (rowIdx === undefined || colIdx === undefined) return;
+    
+    const r = parseInt(rowIdx);
+    const c = parseInt(colIdx);
     const piece = b[r][c];
     let existingPiece = sq.querySelector('.piece');
+    
     if (piece) {
       if (!existingPiece) {
         existingPiece = document.createElement('div');
@@ -568,7 +585,9 @@ function updateBoard() {
       }
       existingPiece.dataset.square = sq.dataset.square;
       existingPiece.style.transform = boardFlipped ? 'rotate(180deg)' : '';
-    } else if (existingPiece) existingPiece.remove();
+    } else if (existingPiece) {
+      existingPiece.remove();
+    }
 
     sq.classList.remove('highlight', 'legal-move', 'in-check', 'premove');
     if (pendingPremove && (sq.dataset.square === pendingPremove.from || sq.dataset.square === pendingPremove.to)) {
@@ -579,13 +598,17 @@ function updateBoard() {
   if (game.in_check()) {
     const kColor = game.turn();
     squares.forEach(sq => {
-      const p = b[parseInt(sq.dataset.row)][parseInt(sq.dataset.col)];
+      const r = parseInt(sq.dataset.row);
+      const c = parseInt(sq.dataset.col);
+      const p = b[r] ? b[r][c] : null;
       if (p && p.type === 'k' && p.color === kColor) sq.classList.add('in-check');
     });
   }
 
   const isOver = game.game_over();
-  document.getElementById('btnReview').classList.toggle('hidden', !isOver);
+  const btnReview = document.getElementById('btnReview');
+  if (btnReview) btnReview.classList.toggle('hidden', !isOver);
+  
   const controls = ['btnUndo', 'btnDraw', 'btnResign'];
   controls.forEach(id => {
     const el = document.getElementById(id);
