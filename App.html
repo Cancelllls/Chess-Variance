@@ -433,36 +433,41 @@ function startPolling() {
             if (lastMove) {
               // Force resume audio context on move detection
               AudioController.init();
-              
               const isCapture = lastMove.flags.includes('c') || lastMove.flags.includes('e');
               if (game.in_check()) AudioController.play('check');
               else if (isCapture) AudioController.play('capture');
               else AudioController.play('move');
             }
-
-            if (pendingPremove && game.turn() === playerColor && !isTakebackActive && playerRole !== 'spectator') {
-              const pm = game.move({ from: pendingPremove.from, to: pendingPremove.to, promotion: 'q' });
-              if (pm) {
-                isWaitingForServer = true;
-                google.script.run
-                  .withSuccessHandler(res => { 
-                     isWaitingForServer = false;
-                     if (res && !res.success) errorCallback(res.error); 
-                  })
-                  .withFailureHandler(err => {
-                     isWaitingForServer = false;
-                     errorCallback(err);
-                  })
-                  .makeMove(roomId, game.fen(), game.game_over(), game.history().length, playerColor);
-                updateBoard();
-                const isPMCapture = pm.flags.includes('c') || pm.flags.includes('e');                if (game.in_check()) AudioController.play('check');
-                else if (isPMCapture) AudioController.play('capture');
-                else AudioController.play('move');
-              }
-              pendingPremove = null;
-            }
           }
         }
+
+        // Execute Premove if it's our turn and not waiting for server
+        if (pendingPremove && game.turn() === playerColor && !isWaitingForServer && !isTakebackActive && playerRole !== 'spectator') {
+          console.log("Executing premove:", pendingPremove);
+          const pm = game.move({ from: pendingPremove.from, to: pendingPremove.to, promotion: 'q' });
+          if (pm) {
+            isWaitingForServer = true;
+            google.script.run
+              .withSuccessHandler(res => { 
+                 isWaitingForServer = false;
+                 if (res && !res.success) errorCallback(res.error); 
+              })
+              .withFailureHandler(err => {
+                 isWaitingForServer = false;
+                 errorCallback(err);
+              })
+              .makeMove(roomId, game.fen(), game.game_over(), game.history().length, playerColor);
+            updateBoard();
+            const isPMCapture = pm.flags.includes('c') || pm.flags.includes('e');
+            if (game.in_check()) AudioController.play('check');
+            else if (isPMCapture) AudioController.play('capture');
+            else AudioController.play('move');
+          } else {
+            console.warn("Premove illegal, clearing.");
+          }
+          pendingPremove = null;
+        }
+
         pollInterval = setTimeout(poll, 1200);
         })
         .withFailureHandler(() => {
