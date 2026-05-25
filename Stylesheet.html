@@ -113,7 +113,22 @@ body {
   z-index: 10;
   transition: transform 0.15s ease-out !important; /* Smooth Piece Animations */
   will-change: transform;
+  
+  /* BROWSER FORCE-DARK FIX: Stop Chrome from inverting colors */
+  color-scheme: only light;
+  forced-color-adjust: none;
+  
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  opacity: 1 !important;
+  filter: drop-shadow(0 2px 2px rgba(0,0,0,0.8));
 }
+
+body.theme-dark .piece, body[data-theme="cyberpunk"] .piece {
+    /* Glowing white rim + deep black shadow for max definition */
+    filter: drop-shadow(0 0 1px #fff) drop-shadow(0 4px 6px #000);
+}
+
 .piece:active { cursor: grabbing; transition: none !important; }
 
 /* --- CYBERPUNK SECRET THEME --- */

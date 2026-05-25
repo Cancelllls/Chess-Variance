@@ -44,6 +44,15 @@ let connectionStatus = 'green';
 // --- AUDIO & HAPTICS CONTROLLER ---
 const AudioController = {
   muted: false,
+  ctx: null,
+  init() {
+    if (!this.ctx) {
+      try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    }
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume();
+    }
+  },
   play(type) {
     if (this.muted) return;
     
@@ -56,23 +65,28 @@ const AudioController = {
 
     // Web Audio Synthesis (Offline Bleeps)
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+      this.init();
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(this.ctx.destination);
       
-      if (type === 'move') { osc.frequency.setValueAtTime(600, ctx.currentTime); gain.gain.setTargetAtTime(0.1, ctx.currentTime, 0.01); }
-      else if (type === 'capture') { osc.frequency.setValueAtTime(400, ctx.currentTime); gain.gain.setTargetAtTime(0.2, ctx.currentTime, 0.01); }
-      else if (type === 'check') { osc.frequency.setValueAtTime(800, ctx.currentTime); gain.gain.setTargetAtTime(0.2, ctx.currentTime, 0.01); }
-      else if (type === 'gameEnd') { osc.frequency.setValueAtTime(300, ctx.currentTime); gain.gain.setTargetAtTime(0.3, ctx.currentTime, 0.01); }
+      if (type === 'move') { osc.frequency.setValueAtTime(600, now); gain.gain.setValueAtTime(0.1, now); }
+      else if (type === 'capture') { osc.frequency.setValueAtTime(400, now); gain.gain.setValueAtTime(0.2, now); }
+      else if (type === 'check') { osc.frequency.setValueAtTime(800, now); gain.gain.setValueAtTime(0.2, now); }
+      else if (type === 'gameEnd') { osc.frequency.setValueAtTime(300, now); gain.gain.setValueAtTime(0.3, now); }
       
-      osc.start();
-      gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + 0.1);
-      osc.stop(ctx.currentTime + 0.1);
+      osc.start(now);
+      gain.gain.exponentialRampToValueAtTime(0.00001, now + 0.1);
+      osc.stop(now + 0.15);
     } catch(e) {}
   }
 };
+
+// Wake audio context on first user interaction
+document.body.addEventListener('click', () => AudioController.init(), { once: true });
 
 document.getElementById('mute-toggle').addEventListener('click', function() {
   AudioController.muted = !AudioController.muted;
@@ -297,7 +311,7 @@ function startPolling() {
         if (state.whiteTime !== null && state.blackTime !== null) {
           const wDelta = Math.abs(state.whiteTime - whiteTime);
           const bDelta = Math.abs(state.blackTime - blackTime);
-          if (wDelta > 500 || bDelta > 500) {
+          if (wDelta > 1000 || bDelta > 1000) {
             whiteTime = state.whiteTime;
             blackTime = state.blackTime;
           }
@@ -307,7 +321,19 @@ function startPolling() {
         const tbToast = document.getElementById('takeback-toast');
         const drToast = document.getElementById('draw-toast');
         const isTakebackActive = !!state.takebackRequest;
-        
+
+        // Waiting overlay logic
+        const waitingOverlay = document.getElementById('waiting-overlay');
+        if (waitingOverlay) {
+            if (!state.blackPlayer) {
+               waitingOverlay.classList.remove('hidden');
+               document.getElementById('waiting-code-display').innerText = roomId;
+               isGamePaused = true;
+            } else {
+               waitingOverlay.classList.add('hidden');
+            }
+        }
+
         // Takeback sync
         if (state.takebackRequest && state.takebackRequest !== playerColor && playerRole !== 'spectator') {
           tbToast.classList.remove('hidden');
@@ -327,27 +353,35 @@ function startPolling() {
           tbToast.classList.add('hidden');
           drToast.classList.add('hidden');
           handleRemoteGameOver(state.gameOver);
-          return; 
+          return;
         }
 
         if (state.fen !== game.fen()) {
           const currentHistory = game.history();
           const serverHistory = new Chess(state.fen).history();
-          const isTakebackDetected = serverHistory.length < currentHistory.length;
-          
+
+          if (isWaitingForServer && serverHistory.length < currentHistory.length) {
+             return; 
+          }
+          if (serverHistory.length >= currentHistory.length) {
+             isWaitingForServer = false;
+          }
+
+          const isTakebackDetected = serverHistory.length < currentHistory.length && !isWaitingForServer;
+
           game.load(state.fen);
-          
+
           if (isTakebackDetected) {
             pendingPremove = null;
             boardEl.querySelectorAll('.square.premove').forEach(s => s.classList.remove('premove'));
             clearHighlights();
             const undoBtn = document.getElementById('btnUndo');
-            if (undoBtn.innerText === "Proposing...") {
+            if (undoBtn && undoBtn.innerText === "Proposing...") {
               undoBtn.innerText = "Undo";
               undoBtn.disabled = false;
             }
           }
-          
+
           updateBoard();
           const lastMove = game.history({verbose:true}).pop();
           if (lastMove) {
@@ -372,22 +406,23 @@ function startPolling() {
             pendingPremove = null;
           }
         }
-        pollInterval = setTimeout(poll, 1000);
-      })
-      .withFailureHandler(() => {
+        pollInterval = setTimeout(poll, 1200);
+        })
+        .withFailureHandler(() => {
         handlePollError();
-      })
-      .getGameState(roomId, playerName);
-  };
-  
-  const handlePollError = () => {
-    pollRetryCount++;
-    setConnectionStatus('yellow'); // Shows the infinite "Reconnecting..." overlay
-    
-    backoffDelay = Math.min(5000, backoffDelay * 2); // Cap at 5s, infinite retries
-    pollInterval = setTimeout(poll, backoffDelay);
-  };
+        })
+        .getGameState(roomId, playerName);
+        };
 
+        const handlePollError = () => {
+        pollRetryCount++;
+        if (pollRetryCount > 3) {
+        setConnectionStatus('yellow'); // Shows the infinite "Reconnecting..." overlay only after 3 tries
+        }
+
+        backoffDelay = Math.min(5000, backoffDelay * 2); // Cap at 5s, infinite retries
+        pollInterval = setTimeout(poll, backoffDelay);
+        };
   pollInterval = setTimeout(poll, 1000);
 }
 
@@ -735,7 +770,20 @@ function highlightSquare(sq) { const el = boardEl.querySelector(`[data-square="$
 function clearHighlights() { boardEl.querySelectorAll('.square').forEach(sq => sq.classList.remove('highlight', 'legal-move')); }
 function highlightLegalMoves(sq) { game.moves({ square: sq, verbose: true }).forEach(m => { const el = boardEl.querySelector(`[data-square="${m.to}"]`); if (el) el.classList.add('legal-move'); }); }
 function showPromotionDialog() { promoDialog.classList.remove('hidden'); }
-function makeAIMove() { if (gameMode !== 'ai' || game.game_over()) return; const m = getBestMove(game, aiDepth); if (m) { game.move(m); updateBoard(); } }
+function makeAIMove() { 
+  if (gameMode !== 'ai' || game.game_over()) return; 
+  const m = getBestMove(game, aiDepth); 
+  if (m) { 
+    const moveResult = game.move(m); 
+    updateBoard(); 
+    
+    // Play sound based on move type
+    const isCapture = moveResult.flags.includes('c') || moveResult.flags.includes('e');
+    if (game.in_check()) AudioController.play('check');
+    else if (isCapture) AudioController.play('capture');
+    else AudioController.play('move');
+  } 
+}
 function showLeaderboard() {
   showMenu('menu-leaderboard');
   google.script.run.withSuccessHandler(players => {

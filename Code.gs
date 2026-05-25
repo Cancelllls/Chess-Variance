@@ -87,8 +87,8 @@ function getGameState(gameId, playerName) {
     if (role === 'w') state.lastHeartbeatWhite = now;
     if (role === 'b') state.lastHeartbeatBlack = now;
 
-    var wOffline = (now - state.lastHeartbeatWhite > 10000);
-    var bOffline = (now - state.lastHeartbeatBlack > 10000);
+    var wOffline = (now - state.lastHeartbeatWhite > 30000);
+    var bOffline = (now - state.lastHeartbeatBlack > 30000);
     
     var shouldBePaused = (wOffline || bOffline) && !state.gameOver;
     
