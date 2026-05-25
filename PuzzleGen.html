@@ -6,6 +6,7 @@ class EnginePool {
     this.taskQueue = [];
     this.onPuzzleFound = null;
     this.onEvalResult = null;
+    this.callbacks = new Map(); // Support concurrent task IDs
     this.isGenerating = false;
     this.isInitialized = false;
   }
@@ -16,7 +17,6 @@ class EnginePool {
       const chessCode = document.getElementById('chess-engine').innerText;
       const stockfishCode = document.getElementById('stockfish-engine').innerText;
 
-      // Construct worker script using a safer method (parts)
       const workerLogic = `
         // Worker State
         let game = new Chess();
@@ -28,16 +28,19 @@ class EnginePool {
         let mateEval = null;
         let currentTaskId = null;
 
-        // UCI initialization logic
-        function setupUCI() {
-          self.postMessage('uci');
-          self.postMessage('setoption name Hash value 32');
-          self.postMessage('isready');
+        // Initialize Stockfish (Emscripten)
+        let engine = typeof STOCKFISH !== "undefined" ? STOCKFISH() : (typeof Stockfish !== "undefined" ? Stockfish() : null);
+        
+        if (engine) {
+          engine.onmessage = (e) => processEngineLine(e.data || e);
+          setTimeout(() => {
+            engine.postMessage('uci');
+            engine.postMessage('setoption name Hash value 32');
+            engine.postMessage('isready');
+          }, 100);
         }
 
-        setTimeout(setupUCI, 100);
-
-        const processEngineLine = (line) => {
+        function processEngineLine(line) {
           if (typeof line !== 'string') return;
           
           if (state === 'LIVE_EVAL' || state === 'BATCH_EVAL') {
@@ -66,8 +69,8 @@ class EnginePool {
                    game.move(parts[1], {sloppy: true});
                    extractionDepth = 1;
                    state = 'EXTRACT_RESPONSE';
-                   self.postMessage('position fen ' + game.fen());
-                   self.postMessage('go depth 10');
+                   engine.postMessage('position fen ' + game.fen());
+                   engine.postMessage('go depth 10');
                    return;
                  }
               }
@@ -82,8 +85,8 @@ class EnginePool {
                    if (extractionDepth < 3 && !game.game_over()) {
                       extractionDepth++;
                       state = state === 'EXTRACT_RESPONSE' ? 'EXTRACT_MOVE' : 'EXTRACT_RESPONSE';
-                      self.postMessage('position fen ' + game.fen());
-                      self.postMessage('go depth 10');
+                      engine.postMessage('position fen ' + game.fen());
+                      engine.postMessage('go depth 10');
                       return;
                    }
                  }
@@ -114,25 +117,23 @@ class EnginePool {
           solutionMoves = [];
           initialFen = generateRandomGame();
           state = 'EVAL_INITIAL';
-          self.postMessage('position fen ' + initialFen);
-          self.postMessage('go depth 10');
+          if (engine) {
+            engine.postMessage('position fen ' + initialFen);
+            engine.postMessage('go depth 10');
+          }
         }
 
-        // Intercept self.onmessage to handle both control and engine output
-        const originalOnMessage = self.onmessage;
         self.onmessage = function(e) {
-          if (!e.data) return;
+          if (!e.data || !engine) return;
           if (e.data.type === 'GENERATE_PUZZLE') {
             startGeneration();
           } else if (e.data.type === 'EVAL_EVALUATE' || e.data.type === 'BATCH_TASK') {
             state = e.data.type === 'EVAL_EVALUATE' ? 'LIVE_EVAL' : 'BATCH_EVAL';
             currentTaskId = e.data.taskId || null;
             lastEval = 0; mateEval = null;
-            self.postMessage('stop');
-            self.postMessage('position fen ' + e.data.fen);
-            self.postMessage('go depth ' + (e.data.depth || 12));
-          } else if (typeof e.data === 'string') {
-            processEngineLine(e.data);
+            engine.postMessage('stop');
+            engine.postMessage('position fen ' + e.data.fen);
+            engine.postMessage('go depth ' + (e.data.depth || 12));
           }
         };
       `;
@@ -157,16 +158,18 @@ class EnginePool {
     if (!e.data || typeof e.data !== 'object') return;
     
     if (e.data.type === 'PUZZLE_FOUND') {
-      try {
-        if (this.onPuzzleFound) this.onPuzzleFound(e.data.fen, e.data.solution);
-      } catch (err) { console.error("onPuzzleFound Error:", err); }
+      if (this.onPuzzleFound) this.onPuzzleFound(e.data.fen, e.data.solution);
       worker.isBusy = false;
       this.isGenerating = false;
       this.processQueue();
     } else if (e.data.type === 'EVAL_RESULT') {
-      try {
-        if (this.onEvalResult) this.onEvalResult(e.data.cp, e.data.mate, e.data.taskId);
-      } catch (err) { console.error("onEvalResult Error:", err); }
+      const { cp, mate, taskId } = e.data;
+      if (taskId && this.callbacks.has(taskId)) {
+        this.callbacks.get(taskId)(cp, mate, taskId);
+        this.callbacks.delete(taskId);
+      } else if (this.onEvalResult) {
+        this.onEvalResult(cp, mate, taskId);
+      }
       worker.isBusy = false;
       this.processQueue();
     }
@@ -189,10 +192,12 @@ class EnginePool {
     this.processQueue();
   }
 
-  evaluate(fen, depth = 12, taskId = null) {
+  evaluate(fen, depth = 12, taskId = null, callback = null) {
     this.initPool();
+    if (callback && taskId) this.callbacks.set(taskId, callback);
+    
     if (taskId === 'live') {
-      this.taskQueue = this.taskQueue.filter(t => t.type !== 'EVAL_EVALUATE');
+      this.taskQueue = this.taskQueue.filter(t => t.taskId !== 'live');
       this.taskQueue.unshift({ type: 'EVAL_EVALUATE', fen, depth, taskId });
     } else {
       this.taskQueue.push({ type: 'BATCH_TASK', fen, depth, taskId });

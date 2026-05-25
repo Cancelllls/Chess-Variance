@@ -919,8 +919,9 @@ function triggerEvaluation(depth = 10) {
   if (gameMode === 'online') return;
   if (evalDebounceTimeout) clearTimeout(evalDebounceTimeout);
   evalDebounceTimeout = setTimeout(() => {
-    enginePool.onEvalResult = (cp, mate, taskId) => { if (taskId === 'live') updateEvalBar(cp, mate); };
-    enginePool.evaluate(game.fen(), depth, 'live');
+    enginePool.evaluate(game.fen(), depth, 'live', (cp, mate) => {
+      updateEvalBar(cp, mate);
+    });
   }, 250);
 }
 let evalDebounceTimeout = null;
@@ -948,10 +949,9 @@ async function runFullGameAnalysis() {
   fullGameAnalysis = []; const history = game.history({ verbose: true }); const tempGame = new Chess(); const fens = [tempGame.fen()];
   for (let m of history) { tempGame.move(m); fens.push(tempGame.fen()); }
   const evalPromises = fens.map((f, i) => new Promise(resolve => {
-      enginePool.evaluate(f, 12, `batch_${i}`);
-      const check = (cp, mate, tid) => { if (tid === `batch_${i}`) { resolve({ cp, mate }); } };
-      const original = enginePool.onEvalResult;
-      enginePool.onEvalResult = (cp, mate, tid) => { if (original) original(cp, mate, tid); check(cp, mate, tid); };
+      enginePool.evaluate(f, 12, `batch_${i}`, (cp, mate) => {
+        resolve({ cp, mate });
+      });
   }));
   const evals = await Promise.all(evalPromises);
   let wCPLs = []; let bCPLs = []; let tallies = { brilliant: 0, great: 0, best: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0 };
