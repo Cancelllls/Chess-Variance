@@ -993,7 +993,9 @@ async function runFullGameAnalysis() {
   }
   
   const evalPromises = fens.map((f, i) => new Promise(resolve => {
+      const timeout = setTimeout(() => resolve({ cp: 0, mate: null }), 5000); // 5s fallback
       enginePool.evaluate(f, 12, `batch_${i}`, (cp, mate) => {
+        clearTimeout(timeout);
         resolve({ cp, mate });
       });
   }));
