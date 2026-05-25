@@ -158,35 +158,59 @@ function showMenu(id) {
 }
 
 function closeWelcomeScreen() {
-  playerName = document.getElementById('player-name-input').value || "Guest";
-  const ws = document.getElementById('welcome-screen');
-  if (ws) {
-    ws.classList.add('hidden');
-    ws.style.setProperty('display', 'none', 'important');
+  console.log("Closing welcome screen...");
+  try {
+    const nameEl = document.getElementById('player-name-input');
+    playerName = (nameEl && nameEl.value) ? nameEl.value.trim() : "Guest";
+    
+    const ws = document.getElementById('welcome-screen');
+    const mainApp = document.getElementById('main-app');
+    
+    if (ws) {
+      ws.style.setProperty('display', 'none', 'important');
+      ws.style.setProperty('visibility', 'hidden', 'important');
+      ws.style.setProperty('opacity', '0', 'important');
+      ws.classList.add('hidden');
+    }
+    
+    if (mainApp) {
+      mainApp.style.setProperty('display', 'flex', 'important');
+      mainApp.style.setProperty('visibility', 'visible', 'important');
+      mainApp.style.setProperty('opacity', '1', 'important');
+      mainApp.style.setProperty('filter', 'none', 'important');
+      mainApp.style.setProperty('pointer-events', 'auto', 'important');
+      mainApp.classList.remove('hidden');
+    }
+    
+    if (clockInterval) clearInterval(clockInterval);
+    clockInterval = setInterval(updateClocks, 1000);
+    console.log("Welcome screen closed.");
+  } catch (e) {
+    console.error("FATAL: closeWelcomeScreen failed", e);
   }
-  const mainApp = document.getElementById('main-app');
-  if (mainApp) {
-    mainApp.classList.remove('hidden');
-    mainApp.style.filter = 'none';
-    mainApp.style.pointerEvents = 'auto';
-  }
-  if (clockInterval) clearInterval(clockInterval);
-  clockInterval = setInterval(updateClocks, 1000);
 }
 
 function openWelcomeScreen() {
   if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
   if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
+  
   const ws = document.getElementById('welcome-screen');
   if (ws) {
+    ws.style.setProperty('display', 'flex', 'important');
+    ws.style.setProperty('visibility', 'visible', 'important');
+    ws.style.setProperty('opacity', '1', 'important');
+    ws.style.setProperty('pointer-events', 'auto', 'important');
     ws.classList.remove('hidden');
-    ws.style.removeProperty('display');
   }
+  
   const mainApp = document.getElementById('main-app');
   if (mainApp) {
-    mainApp.style.filter = 'blur(5px)';
-    mainApp.style.pointerEvents = 'none';
+    mainApp.style.setProperty('display', 'none', 'important');
+    mainApp.style.setProperty('filter', 'blur(5px)', 'important');
+    mainApp.style.setProperty('pointer-events', 'none', 'important');
+    mainApp.classList.add('hidden');
   }
+  
   showMenu('menu-main');
   roomId = null;
   playerRole = 'player';
@@ -925,39 +949,59 @@ safeAddListener('btnLoad', 'click', () => { google.script.run.withSuccessHandler
 safeAddListener('btnExport', 'click', () => { const blob = new Blob([game.pgn()], {type: "text/plain;charset=utf-8"}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'game.pgn'; a.click(); });
 
 document.addEventListener('DOMContentLoaded', () => { 
+  console.log("DOM fully loaded and parsed");
+  
   boardEl = document.getElementById('board');
   moveListEl = document.getElementById('move-list');
   promoDialog = document.getElementById('promotion-dialog');
   premoveToggle = document.getElementById('premove-toggle');
   svgLayer = document.getElementById('svg-draw-layer');
 
-  initBoard(); 
-  document.getElementById('welcome-screen').classList.remove('hidden'); 
-  boardEl.addEventListener('dblclick', function(e) { e.preventDefault(); }, { passive: false });
-  
-  // Right-Click Arrow Drawing
-  boardEl.addEventListener('contextmenu', e => e.preventDefault());
-  boardEl.addEventListener('mousedown', e => {
-    if (e.button === 2) {
-      isRightClickDragging = true;
-      rightClickStartSq = getSquareFromEvent(e);
-    } else if (e.button === 0) {
-      clearSVG();
-    }
-  });
-  
-  boardEl.addEventListener('mouseup', e => {
-    if (e.button === 2 && isRightClickDragging) {
-      isRightClickDragging = false;
-      const endSq = getSquareFromEvent(e);
-      if (rightClickStartSq && endSq && rightClickStartSq !== endSq) {
-        drawArrow(rightClickStartSq, endSq);
-      } else if (rightClickStartSq === endSq) {
-        drawCircle(rightClickStartSq);
+  if (boardEl) {
+    initBoard(); 
+    boardEl.addEventListener('dblclick', function(e) { e.preventDefault(); }, { passive: false });
+    
+    // Right-Click Arrow Drawing
+    boardEl.addEventListener('contextmenu', e => e.preventDefault());
+    boardEl.addEventListener('mousedown', e => {
+      if (e.button === 2) {
+        isRightClickDragging = true;
+        rightClickStartSq = getSquareFromEvent(e);
+      } else if (e.button === 0) {
+        clearSVG();
       }
-      rightClickStartSq = null;
-    }
-  });
+    });
+    
+    boardEl.addEventListener('mouseup', e => {
+      if (e.button === 2 && isRightClickDragging) {
+        isRightClickDragging = false;
+        const endSq = getSquareFromEvent(e);
+        if (rightClickStartSq && endSq && rightClickStartSq !== endSq) {
+          drawArrow(rightClickStartSq, endSq);
+        } else if (rightClickStartSq === endSq) {
+          drawCircle(rightClickStartSq);
+        }
+        rightClickStartSq = null;
+      }
+    });
+  } else {
+    console.error("CRITICAL: Board element NOT FOUND on init!");
+  }
+  
+  const ws = document.getElementById('welcome-screen');
+  if (ws) {
+    ws.style.setProperty('display', 'flex', 'important');
+    ws.classList.remove('hidden');
+  }
+  
+  // Mute toggle
+  const muteBtn = document.getElementById('mute-toggle');
+  if (muteBtn) {
+    muteBtn.addEventListener('click', function() {
+      AudioController.muted = !AudioController.muted;
+      this.innerText = AudioController.muted ? '🔇' : '🔊';
+    });
+  }
 });
 
 function getSquareFromEvent(e) {
