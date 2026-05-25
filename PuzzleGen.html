@@ -4,9 +4,9 @@ class EnginePool {
     this.poolSize = Math.min(2, navigator.hardwareConcurrency || 2);
     this.workers = [];
     this.taskQueue = [];
-    this.callbacks = new Map(); // Map taskId -> callback
-    this.onPuzzleFound = null; // Legacy support
-    this.onEvalResult = null;  // Legacy support
+    this.callbacks = new Map(); 
+    this.onPuzzleFound = null; 
+    this.onEvalResult = null;  
     this.isInitialized = false;
     this.isGenerating = false;
   }
@@ -31,7 +31,6 @@ class EnginePool {
           const line = e.data;
           if (typeof line !== 'string') return;
 
-          // Parse Evaluation
           if (line.startsWith('info depth')) {
             const cpMatch = line.match(/score cp (-?\\d+)/);
             if (cpMatch) { worker.lastCp = parseInt(cpMatch[1]); worker.lastMate = null; }
@@ -39,7 +38,6 @@ class EnginePool {
             if (mateMatch) { worker.lastMate = parseInt(mateMatch[1]); worker.lastCp = worker.lastMate > 0 ? 10000 : -10000; }
           }
 
-          // Parse Best Move
           if (line.startsWith('bestmove')) {
             const move = line.split(' ')[1];
             if (worker.currentTask) {
@@ -57,7 +55,6 @@ class EnginePool {
             this.processQueue();
           }
 
-          // Raw output for live eval bar
           if (this.onEvalResult && worker.currentTask?.taskId === 'live') {
             this.onEvalResult(null, null, 'raw', null, line);
           }
@@ -101,12 +98,10 @@ class EnginePool {
     this.processQueue();
   }
 
-  // --- FASTER PUZZLE GENERATION ---
   async generate() {
+    if (this.isGenerating) return;
     this.isGenerating = true;
     const tempGame = new Chess();
-    
-    // Play a random opening
     const plies = 10 + Math.floor(Math.random() * 15);
     for(let i=0; i<plies; i++) {
        const moves = tempGame.moves();
@@ -117,18 +112,15 @@ class EnginePool {
     const findTacticalLine = (fen) => {
       return new Promise(resolve => {
         this.evaluate(fen, 10, 'gen_puzzle', (cp, mate, tid, move) => {
-          if (Math.abs(cp) > 350 || mate !== null) {
-            // Found a winning position, now extract 3 plies
+          if (Math.abs(cp) > 300 || mate !== null) {
             const solution = [move];
             const p2Game = new Chess(fen);
             p2Game.move(move);
-            const fen2 = p2Game.fen();
-            
-            this.evaluate(fen2, 10, 'gen_puzzle_step2', (cp2, mate2, tid2, move2) => {
+            this.evaluate(p2Game.fen(), 10, 'gen_puzzle_s2', (cp2, mate2, tid2, move2) => {
                if (move2) {
                  solution.push(move2);
                  p2Game.move(move2);
-                 this.evaluate(p2Game.fen(), 10, 'gen_puzzle_step3', (cp3, mate3, tid3, move3) => {
+                 this.evaluate(p2Game.fen(), 10, 'gen_puzzle_s3', (cp3, mate3, tid3, move3) => {
                    if (move3) solution.push(move3);
                    resolve({ fen, solution });
                  });
@@ -141,8 +133,7 @@ class EnginePool {
 
     let result = await findTacticalLine(tempGame.fen());
     if (!result) {
-       // Try again after a short delay to keep UI responsive
-       setTimeout(() => this.generate(), 50);
+       setTimeout(() => { this.isGenerating = false; this.generate(); }, 200);
        return;
     }
 
@@ -151,20 +142,22 @@ class EnginePool {
   }
 }
 
-// UI Integration
+// Master Puzzle Seed (Ensures instant loading always)
+const PUZZLE_SEED = [
+  { fen: "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR b KQkq - 3 3", solution: ["f7f6", "f3h5", "g7g6"] },
+  { fen: "rn1qkbnr/ppp2ppp/3p4/4p3/2B1P1b1/5N2/PPPP1PPP/RNBQK2R w KQkq - 2 4", solution: ["c4f7", "e8f7", "f3e5"] },
+  { fen: "r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", solution: ["c4f7", "e8f7", "f3e5"] },
+  { fen: "r2qkb1r/pp2pppp/2n2n2/1B1p4/3P2b1/2N2N2/PPP2PPP/R1BQK2R w KQkq - 5 7", solution: ["h2h3", "g4f3", "d1f3"] },
+  { fen: "rn1qkb1r/pp3ppp/2p1pn2/3p1b2/2PP4/2N1PN2/PP3PPP/R1BQKB1R w KQkq - 2 6", solution: ["c4d5", "c6d5", "d1b3"] },
+  { fen: "r1bqkb1r/pp3ppp/2n1pn2/2pp4/2PP4/2N1PN2/PP3PPP/R1BQKB1R w KQkq - 2 6", solution: ["c4d5", "e6d5", "f1b5"] },
+  { fen: "r2qk2r/ppp2ppp/2n1bn2/2bpp3/4P3/2PP1N2/PPB2PPP/RNBQ1RK1 b kq - 4 8", solution: ["d5e4", "d3e4", "d8d1"] },
+  { fen: "r1bqk2r/ppp2ppp/2n2n2/2bpp3/4P3/2PP1N2/PPB2PPP/RNBQ1RK1 w kq - 4 8", solution: ["e4d5", "f6d5", "d1e2"] }
+];
+
 const enginePool = new EnginePool();
 let puzzleSolution = [];
 let currentPuzzleStep = 0;
-let puzzleBuffer = [];
-
-// Pre-warm the buffer
-setTimeout(() => {
-  enginePool.onPuzzleFound = (fen, solution) => {
-    puzzleBuffer.push({ fen, solution });
-    if (puzzleBuffer.length < 3) enginePool.generate();
-  };
-  enginePool.generate();
-}, 2000);
+let puzzleBuffer = [...PUZZLE_SEED];
 
 function startOfflinePuzzle() {
   if (typeof isGamePaused !== 'undefined') isGamePaused = false;
@@ -172,24 +165,15 @@ function startOfflinePuzzle() {
   if (puzzleBuffer.length > 0) {
     const p = puzzleBuffer.shift();
     loadPuzzleData(p.fen, p.solution);
-    enginePool.onPuzzleFound = (f, s) => { 
-      puzzleBuffer.push({ fen: f, solution: s }); 
-      if (puzzleBuffer.length < 3) enginePool.generate();
-    };
-    if (!enginePool.isGenerating) enginePool.generate();
+    if (puzzleBuffer.length < 5) enginePool.generate();
+    enginePool.onPuzzleFound = (f, s) => { puzzleBuffer.push({ fen: f, solution: s }); };
   } else {
-    const btn = document.getElementById('btn-generate-puzzle');
-    if (btn) btn.innerText = "⏳ Generating...";
+    document.getElementById('btn-generate-puzzle').innerText = "⏳ Generating...";
     enginePool.onPuzzleFound = (fen, solution) => {
-      if (btn) btn.innerText = "🧩 Puzzles";
+      document.getElementById('btn-generate-puzzle').innerText = "🧩 Puzzles";
       loadPuzzleData(fen, solution);
-      enginePool.onPuzzleFound = (f, s) => { 
-        puzzleBuffer.push({ fen: f, solution: s }); 
-        if (puzzleBuffer.length < 3) enginePool.generate();
-      };
-      if (!enginePool.isGenerating) enginePool.generate();
     };
-    if (!enginePool.isGenerating) enginePool.generate();
+    enginePool.generate();
   }
 }
 
@@ -239,7 +223,7 @@ function handlePuzzleMove(move) {
       if (fromEl) { fromEl.classList.add('shake'); setTimeout(() => fromEl.classList.remove('shake'), 400); }
     }
     const infoEl = document.getElementById('game-info-panel');
-    if (infoEl) infoEl.innerText = "Incorrect move, try again.";
+    if (infoEl) infoEl.innerText = "Incorrect, try again.";
   }
 }
 </script>
