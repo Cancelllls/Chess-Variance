@@ -14,13 +14,17 @@
   --square-light: #ebecd0;
   --square-size: clamp(45px, 11vw, 85px);
   
-  /* Move Classification Colors */
+  /* Move Classification Colors (Chess.com Accurate) */
   --color-brilliant: #1baca6;
   --color-great: #5c8bb0;
   --color-best: #81b64c;
+  --color-excellent: #96af8b;
+  --color-good: #96af8b;
+  --color-book: #a88865;
   --color-inaccuracy: #faca2f;
   --color-mistake: #f29828;
   --color-blunder: #fa412d;
+  --color-forced: #989795;
   
   --border-radius: 4px;
 }
@@ -261,13 +265,60 @@ body[data-theme="cyberpunk"] .eval-bar-text {
 .move-val {
   flex: 1;
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 3px;
+  padding: 6px 10px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 5px;
+  transition: background 0.2s;
 }
-.move-val:hover { background: rgba(255,255,255,0.05); }
+.move-val:hover { background: rgba(255,255,255,0.08); }
+
+/* Analysis Markers */
+.move-marker {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.marker-brilliant { background: var(--color-brilliant); }
+.marker-great { background: var(--color-great); }
+.marker-best { background: var(--color-best); }
+.marker-good { background: var(--color-good); }
+.marker-book { background: var(--color-book); }
+.marker-inaccuracy { background: var(--color-inaccuracy); }
+.marker-mistake { background: var(--color-mistake); }
+.marker-blunder { background: var(--color-blunder); }
+
+.badge {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 900;
+  color: #fff;
+  flex-shrink: 0;
+  border: 2px solid #fff;
+}
+.badge-brilliant { background: var(--color-brilliant); box-shadow: 0 0 10px var(--color-brilliant); }
+.badge-great { background: var(--color-great); }
+.badge-best { background: var(--color-best); }
+.badge-good { background: var(--color-good); }
+.badge-book { background: var(--color-book); }
+.badge-inaccuracy { background: var(--color-inaccuracy); color: #000; }
+.badge-mistake { background: var(--color-mistake); }
+.badge-blunder { background: var(--color-blunder); }
+
+.square-badge {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  z-index: 100;
+}
 
 /* --- BUTTONS (Tactile) --- */
 
@@ -354,35 +405,6 @@ body[data-theme="cyberpunk"] .eval-bar-text {
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-
-/* --- CLASSIFICATION BADGES & ANNOTATIONS --- */
-
-.badge {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  font-size: 10px;
-  font-weight: 900;
-  color: #fff;
-  flex-shrink: 0;
-}
-.badge-brilliant { background: var(--color-brilliant); }
-.badge-great { background: var(--color-great); }
-.badge-best { background: var(--color-best); }
-.badge-inaccuracy { background: var(--color-inaccuracy); color: #000; }
-.badge-mistake { background: var(--color-mistake); }
-.badge-blunder { background: var(--color-blunder); }
-
-.square-badge {
-  position: absolute;
-  top: -8px;
-  right: -8px;
-  z-index: 30;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.4);
 }
 
 /* --- OVERLAYS & DIALOGS --- */

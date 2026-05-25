@@ -556,11 +556,47 @@ function initBoard() {
 function updateMoveList() {
   const hist = game.history();
   let html = '';
+  
+  const icons = { 
+    brilliant: '!!', 
+    great: '!', 
+    best: '★', 
+    excellent: '✓', 
+    good: '✓', 
+    book: '📖', 
+    inaccuracy: '?!', 
+    mistake: '?', 
+    blunder: '??' 
+  };
+
   for (let i = 0; i < hist.length; i += 2) {
+    const wIdx = i;
+    const bIdx = i + 1;
+    
+    let wMarker = '';
+    let bMarker = '';
+    
+    if (gameMode === 'analysis' && fullGameAnalysis.length > 0) {
+      if (fullGameAnalysis[wIdx]) {
+        const cls = fullGameAnalysis[wIdx].classification.toLowerCase();
+        wMarker = `<span class="move-marker marker-${cls}" title="${cls}"></span>`;
+      }
+      if (fullGameAnalysis[bIdx]) {
+        const cls = fullGameAnalysis[bIdx].classification.toLowerCase();
+        bMarker = `<span class="move-marker marker-${cls}" title="${cls}"></span>`;
+      }
+    }
+
     html += `<div class="move-row" style="display:grid; grid-template-columns:35px 1fr 1fr; padding:4px 0; border-bottom:1px solid #333;">
-               <span style="color:#666; font-weight:bold;">${Math.floor(i/2)+1}</span>
-               <span>${hist[i]}</span>
-               <span>${hist[i+1]||''}</span>
+               <span style="color:#666; font-weight:bold; display:flex; align-items:center; justify-content:center;">${Math.floor(i/2)+1}</span>
+               <span class="move-val" onclick="goToAnalysisStep(${wIdx})">
+                 <span>${hist[wIdx]}</span>
+                 ${wMarker}
+               </span>
+               <span class="move-val" onclick="goToAnalysisStep(${bIdx})">
+                 <span>${hist[bIdx]||''}</span>
+                 ${bMarker}
+               </span>
              </div>`;
   }
   if (moveListEl) {
@@ -946,28 +982,62 @@ async function startAnalysisMode() {
   updateBoard(); triggerEvaluation(16);
 }
 async function runFullGameAnalysis() {
-  fullGameAnalysis = []; const history = game.history({ verbose: true }); const tempGame = new Chess(); const fens = [tempGame.fen()];
-  for (let m of history) { tempGame.move(m); fens.push(tempGame.fen()); }
+  fullGameAnalysis = []; 
+  const history = game.history({ verbose: true }); 
+  const tempGame = new Chess(); 
+  const fens = [tempGame.fen()];
+  
+  for (let m of history) { 
+    tempGame.move(m); 
+    fens.push(tempGame.fen()); 
+  }
+  
   const evalPromises = fens.map((f, i) => new Promise(resolve => {
       enginePool.evaluate(f, 12, `batch_${i}`, (cp, mate) => {
         resolve({ cp, mate });
       });
   }));
+  
   const evals = await Promise.all(evalPromises);
-  let wCPLs = []; let bCPLs = []; let tallies = { brilliant: 0, great: 0, best: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0 };
+  let wCPLs = []; 
+  let bCPLs = []; 
+  let tallies = { brilliant: 0, great: 0, best: 0, excellent: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0, book: 0 };
+  
   for (let i = 0; i < history.length; i++) {
-    const prev = evals[i]; const curr = evals[i+1]; const turn = i % 2 === 0 ? 'w' : 'b';
+    const prev = evals[i]; 
+    const curr = evals[i+1]; 
+    const turn = i % 2 === 0 ? 'w' : 'b';
+    
     let pVal = prev.cp; if (prev.mate !== null) pVal = prev.mate > 0 ? 10000 : -10000;
     let cVal = curr.cp; if (curr.mate !== null) cVal = curr.mate > 0 ? 10000 : -10000;
+    
     let cpl = Math.max(0, turn === 'w' ? (pVal - cVal) : (cVal - pVal));
-    let cls = "Good"; if (cpl < 5) cls = "Brilliant"; else if (cpl < 12) cls = "Great"; else if (cpl < 25) cls = "Best"; else if (cpl <= 55) cls = "Good"; else if (cpl <= 110) cls = "Inaccuracy"; else if (cpl <= 260) cls = "Mistake"; else cls = "Blunder";
+    let cls = "Good"; 
+
+    // CHESS.COM CLASSIFICATION LOGIC
+    if (i < 8 && cpl < 30) cls = "Book";
+    else if (cpl < 8) cls = "Best";
+    else if (cpl < 15) cls = "Excellent";
+    else if (cpl < 30) cls = "Good";
+    else if (cpl < 60) cls = "Inaccuracy";
+    else if (cpl < 180) cls = "Mistake";
+    else cls = "Blunder";
+
+    // Detect Brilliant/Great
+    if (cls === "Best" && Math.abs(cVal) > 200 && cpl < 2) {
+       if (history[i].captured || history[i].san.includes('x')) cls = "Brilliant";
+       else cls = "Great";
+    }
+    
     if (turn === 'w') wCPLs.push(cpl); else bCPLs.push(cpl);
     tallies[cls.toLowerCase()]++;
     fullGameAnalysis.push({ move: history[i], eval: curr, cpl: cpl, classification: cls });
   }
   displayAnalysisReport(wCPLs, bCPLs, tallies);
-  document.getElementById('game-info-panel').innerText = "Analysis Mode";
+  const infoEl = document.getElementById('game-info-panel');
+  if (infoEl) infoEl.innerText = "Analysis Mode";
 }
+
 function displayAnalysisReport(w, b, t) {
   const acplW = w.reduce((a,x)=>a+x,0)/(w.length||1); const acplB = b.reduce((a,x)=>a+x,0)/(b.length||1);
   const accW = Math.round(Math.max(0, 100 - acplW/2)); const accB = Math.round(Math.max(0, 100 - acplB/2));
@@ -976,8 +1046,25 @@ function displayAnalysisReport(w, b, t) {
   document.getElementById('white-acc').innerText = accW + "%"; document.getElementById('black-acc').innerText = accB + "%";
   document.getElementById('white-acc-ring').style.strokeDashoffset = 226 - (226*accW)/100;
   document.getElementById('black-acc-ring').style.strokeDashoffset = 226 - (226*accB)/100;
-  const items = [{l:'Brilliant',k:'brilliant',c:'var(--color-brilliant)'},{l:'Great',k:'great',c:'var(--color-great)'},{l:'Best',k:'best',c:'var(--color-best)'},{l:'Inacc',k:'inaccuracy',c:'var(--color-inaccuracy)'},{l:'Mistake',k:'mistake',c:'var(--color-mistake)'},{l:'Blunder',k:'blunder',c:'var(--color-blunder)'}];
-  document.getElementById('move-tally').innerHTML = items.map(i => `<div class="tally-item" style="border-left: 3px solid ${i.c}"><span>${i.l}</span><b>${t[i.k]||0}</b></div>`).join('');
+  
+  const items = [
+    {l:'Brilliant',k:'brilliant',c:'var(--color-brilliant)', i:'!!'},
+    {l:'Great',k:'great',c:'var(--color-great)', i:'!'},
+    {l:'Best',k:'best',c:'var(--color-best)', i:'★'},
+    {l:'Excellent',k:'excellent',c:'var(--color-excellent)', i:'✓'},
+    {l:'Good',k:'good',c:'var(--color-good)', i:'✓'},
+    {l:'Book',k:'book',c:'var(--color-book)', i:'📖'},
+    {l:'Inaccuracy',k:'inaccuracy',c:'var(--color-inaccuracy)', i:'?!'},
+    {l:'Mistake',k:'mistake',c:'var(--color-mistake)', i:'?'},
+    {l:'Blunder',k:'blunder',c:'var(--color-blunder)', i:'??'}
+  ];
+  
+  document.getElementById('move-tally').innerHTML = items.map(i => `
+    <div class="tally-item" style="border-left: 3px solid ${i.c}">
+      <span style="display:flex; align-items:center; gap:5px;"><small style="opacity:0.7">${i.i}</small> ${i.l}</span>
+      <b>${t[i.k]||0}</b>
+    </div>
+  `).join('');
 }
 function exitAnalysisMode() { document.getElementById('analysis-controls').classList.add('hidden'); document.getElementById('analysis-report').classList.add('hidden'); document.getElementById('main-controls').classList.remove('hidden'); openWelcomeScreen(); }
 function goToAnalysisStep(index) {
@@ -988,8 +1075,21 @@ function goToAnalysisStep(index) {
     const m = fullGameAnalysis[index].move; const cls = fullGameAnalysis[index].classification.toLowerCase();
     const toSq = boardEl.querySelector(`[data-square="${m.to}"]`);
     if (toSq) {
-      const icons = { brilliant: '!!', great: '!', best: '★', inaccuracy: '?!', mistake: '?', blunder: '??' };
-      const badge = document.createElement('div'); badge.className = `badge badge-${cls} square-badge`; badge.innerText = icons[cls] || ''; toSq.appendChild(badge);
+      const icons = { 
+        brilliant: '!!', 
+        great: '!', 
+        best: '★', 
+        excellent: '✓', 
+        good: '✓', 
+        book: '📖', 
+        inaccuracy: '?!', 
+        mistake: '?', 
+        blunder: '??' 
+      };
+      const badge = document.createElement('div'); 
+      badge.className = `badge badge-${cls} square-badge`; 
+      badge.innerText = icons[cls] || ''; 
+      toSq.appendChild(badge);
     }
   }
   triggerEvaluation(16);
