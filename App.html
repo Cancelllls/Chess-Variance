@@ -157,26 +157,21 @@ function showMenu(id) {
   if (target) target.classList.remove('hidden');
 }
 
-function closeWelcomeScreen() {
-  console.log("Force-closing welcome screen...");
-  try {
-    const nameEl = document.getElementById('player-name-input');
-    playerName = (nameEl && nameEl.value) ? nameEl.value.trim() : "Guest";
-    
-    const ws = document.getElementById('welcome-screen');
-    const mainApp = document.getElementById('main-app');
-    const waitOverlay = document.getElementById('waiting-overlay');
-    
+/**
+ * UI STATE MANAGEMENT
+ */
+function setGameState(isInGame) {
+  const ws = document.getElementById('welcome-screen');
+  const mainApp = document.getElementById('main-app');
+  const waitOverlay = document.getElementById('waiting-overlay');
+  
+  if (isInGame) {
     if (ws) {
       ws.style.setProperty('display', 'none', 'important');
-      ws.style.setProperty('visibility', 'hidden', 'important');
-      ws.style.setProperty('opacity', '0', 'important');
       ws.style.setProperty('z-index', '-1', 'important');
       ws.classList.add('hidden');
     }
-    
     if (waitOverlay) waitOverlay.classList.add('hidden');
-
     if (mainApp) {
       mainApp.style.setProperty('display', 'flex', 'important');
       mainApp.style.setProperty('visibility', 'visible', 'important');
@@ -185,66 +180,69 @@ function closeWelcomeScreen() {
       mainApp.style.setProperty('pointer-events', 'auto', 'important');
       mainApp.classList.remove('hidden');
     }
-    
     if (clockInterval) clearInterval(clockInterval);
     clockInterval = setInterval(updateClocks, 1000);
-    console.log("Main App Visible.");
-  } catch (e) {
-    console.error("CRITICAL: closeWelcomeScreen failed", e);
+  } else {
+    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
+    if (ws) {
+      ws.style.setProperty('display', 'flex', 'important');
+      ws.style.setProperty('z-index', '2000', 'important');
+      ws.style.setProperty('visibility', 'visible', 'important');
+      ws.style.setProperty('opacity', '1', 'important');
+      ws.classList.remove('hidden');
+    }
+    if (mainApp) {
+      mainApp.style.setProperty('display', 'none', 'important');
+      mainApp.style.setProperty('filter', 'blur(5px)', 'important');
+      mainApp.style.setProperty('pointer-events', 'none', 'important');
+      mainApp.classList.add('hidden');
+    }
+    if (waitOverlay) waitOverlay.classList.add('hidden');
+    showMenu('menu-main');
+    roomId = null;
+    playerRole = 'player';
+    setConnectionStatus('green');
   }
+}
+
+function closeWelcomeScreen() {
+  const nameEl = document.getElementById('player-name-input');
+  playerName = (nameEl && nameEl.value) ? nameEl.value.trim() : "Guest";
+  setGameState(true);
 }
 
 function openWelcomeScreen() {
-  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
-  if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
-  
-  const ws = document.getElementById('welcome-screen');
-  if (ws) {
-    ws.style.setProperty('display', 'flex', 'important');
-    ws.style.setProperty('visibility', 'visible', 'important');
-    ws.style.setProperty('opacity', '1', 'important');
-    ws.style.setProperty('pointer-events', 'auto', 'important');
-    ws.classList.remove('hidden');
+  setGameState(false);
+  if (boardEl) {
+    const overlay = boardEl.querySelector('.game-over-overlay');
+    if (overlay) overlay.remove();
   }
-  
-  const mainApp = document.getElementById('main-app');
-  if (mainApp) {
-    mainApp.style.setProperty('display', 'none', 'important');
-    mainApp.style.setProperty('filter', 'blur(5px)', 'important');
-    mainApp.style.setProperty('pointer-events', 'none', 'important');
-    mainApp.classList.add('hidden');
-  }
-  
-  showMenu('menu-main');
-  roomId = null;
-  playerRole = 'player';
-  const badge = document.getElementById('spectator-badge');
-  if (badge) badge.classList.add('hidden');
-  setConnectionStatus('green');
-  const overlay = boardEl.querySelector('.game-over-overlay');
-  if (overlay) overlay.remove();
 }
 
 function startLocalMultiplayer() {
+  closeWelcomeScreen();
   gameMode = 'local';
   game.reset();
   boardFlipped = false;
   whiteTime = blackTime = null; // Unlimited for local
   updateBoard();
-  document.getElementById('game-info-panel').innerText = "Local Pass & Play";
-  closeWelcomeScreen();
+  const infoEl = document.getElementById('game-info-panel');
+  if (infoEl) infoEl.innerText = "Local Pass & Play";
 }
 
 function startAIGame(color) {
+  closeWelcomeScreen();
   gameMode = 'ai';
   playerColor = color;
-  aiDepth = parseInt(document.getElementById('ai-diff-slider').value);
+  const diffSlider = document.getElementById('ai-diff-slider');
+  aiDepth = diffSlider ? parseInt(diffSlider.value) : 2;
   game.reset();
   boardFlipped = (color === 'b');
   whiteTime = blackTime = null; // Unlimited for AI
   updateBoard();
-  document.getElementById('game-info-panel').innerText = "Playing vs Computer";
-  closeWelcomeScreen();
+  const infoEl = document.getElementById('game-info-panel');
+  if (infoEl) infoEl.innerText = "Playing vs Computer";
   if (color === 'b') setTimeout(makeAIMove, 250);
 }
 
@@ -258,6 +256,7 @@ function createOnlineRoom() {
   try {
     google.script.run
       .withSuccessHandler(id => {
+        closeWelcomeScreen();
         roomId = id;
         gameMode = 'online';
         playerColor = 'w';
@@ -267,8 +266,8 @@ function createOnlineRoom() {
         const tc = (timeControl === "null") ? null : parseInt(timeControl, 10);
         whiteTime = blackTime = tc;
         updateBoard();
-        document.getElementById('game-info-panel').innerText = "Room Code: " + roomId;
-        closeWelcomeScreen();
+        const infoEl = document.getElementById('game-info-panel');
+        if (infoEl) infoEl.innerText = "Room Code: " + roomId;
         startPolling();
       })
       .withFailureHandler(e => {
@@ -295,23 +294,26 @@ function joinOnlineRoom() {
            document.getElementById('online-status').innerText = "Room not found.";
            return;
         }
+        closeWelcomeScreen();
         roomId = id;
         gameMode = 'online';
         const state = res.data;
         playerColor = res.role === 'spectator' ? 'w' : res.role;
         playerRole = res.role;
         boardFlipped = (playerColor === 'b');
-        if (playerRole === 'spectator') document.getElementById('spectator-badge').classList.remove('hidden');
+        if (playerRole === 'spectator') {
+          const badge = document.getElementById('spectator-badge');
+          if (badge) badge.classList.remove('hidden');
+        }
         
-        // Inherit exact server state
         game.load(state.fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
         whiteTime = state.whiteTime;
         blackTime = state.blackTime;
         lastServerSync = state.lastMoveTimestamp;
         
         updateBoard();
-        document.getElementById('game-info-panel').innerText = "Room Code: " + roomId;
-        closeWelcomeScreen();
+        const infoEl = document.getElementById('game-info-panel');
+        if (infoEl) infoEl.innerText = "Room Code: " + roomId;
         startPolling();
       })
       .withFailureHandler(e => {

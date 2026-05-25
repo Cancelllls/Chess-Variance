@@ -245,6 +245,7 @@ function startOfflinePuzzle() {
 }
 
 function loadPuzzleData(fen, solution) {
+  closeWelcomeScreen();
   gameMode = 'puzzle';
   puzzleSolution = solution; 
   currentPuzzleStep = 0;
@@ -253,8 +254,8 @@ function loadPuzzleData(fen, solution) {
   boardFlipped = (playerColor === 'b');
   updateBoard();
   triggerEvaluation(14);
-  document.getElementById('game-info-panel').innerText = "Puzzle: Find the best move!";
-  closeWelcomeScreen();
+  const infoEl = document.getElementById('game-info-panel');
+  if (infoEl) infoEl.innerText = "Puzzle: Find the best move!";
 }
 
 function handlePuzzleMove(move) {
