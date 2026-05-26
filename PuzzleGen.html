@@ -226,4 +226,38 @@ function handlePuzzleMove(move) {
     if (infoEl) infoEl.innerText = "Incorrect, try again.";
   }
 }
+
+function showPuzzleHint() {
+  if (gameMode !== 'puzzle') return;
+  const nextMove = puzzleSolution[currentPuzzleStep];
+  if (nextMove) {
+    const from = nextMove.substring(0, 2);
+    const to = nextMove.substring(2, 4);
+    clearSVG();
+    drawArrow(from, to);
+    const infoEl = document.getElementById('game-info-panel');
+    if (infoEl) infoEl.innerText = "Look at the orange arrow!";
+  }
+}
+
+function showPuzzleSolution() {
+  if (gameMode !== 'puzzle') return;
+  const playNext = () => {
+    if (currentPuzzleStep >= puzzleSolution.length) {
+      const infoEl = document.getElementById('game-info-panel');
+      if (infoEl) infoEl.innerText = "Puzzle Solved!";
+      setTimeout(() => startOfflinePuzzle(), 1500);
+      return;
+    }
+    const moveStr = puzzleSolution[currentPuzzleStep];
+    const res = game.move(moveStr, { sloppy: true });
+    if (res) {
+      updateBoard();
+      if (typeof AudioController !== 'undefined') AudioController.play('move');
+      currentPuzzleStep++;
+      setTimeout(playNext, 800);
+    }
+  };
+  playNext();
+}
 </script>

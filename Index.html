@@ -176,6 +176,12 @@
       </div>
 
       <!-- Live Controls -->
+      <!-- Puzzle Specific Controls -->
+      <div id="puzzle-controls" class="controls hidden" style="background: rgba(129, 182, 76, 0.1); border-top: 1px solid #444; grid-template-columns: 1fr 1fr; display:none;">
+        <button class="btn-primary" id="btnHint" onclick="showPuzzleHint()" style="background:#5c8bb0; border-color:#3e5c74; font-size:12px;">💡 Hint</button>
+        <button class="btn-primary" id="btnSolution" onclick="showPuzzleSolution()" style="background:#81b64c; border-color:#537731; font-size:12px;">👁 Solution</button>
+      </div>
+
       <div id="main-controls" class="controls">
         <button class="btn-primary" id="btnReview" class="hidden" style="grid-column: span 2;">Game Review</button>
         <button class="btn-primary" id="btnUndo" style="background:#484542; border-color:#333;">Undo</button>

@@ -172,6 +172,19 @@ function setGameState(isInGame) {
       ws.classList.add('hidden');
     }
     if (waitOverlay) waitOverlay.classList.add('hidden');
+    
+    // Manage puzzle controls
+    const pc = document.getElementById('puzzle-controls');
+    if (pc) {
+      if (gameMode === 'puzzle') {
+        pc.style.setProperty('display', 'grid', 'important');
+        pc.classList.remove('hidden');
+      } else {
+        pc.style.setProperty('display', 'none', 'important');
+        pc.classList.add('hidden');
+      }
+    }
+
     if (mainApp) {
       mainApp.style.setProperty('display', 'flex', 'important');
       mainApp.style.setProperty('visibility', 'visible', 'important');
@@ -199,6 +212,11 @@ function setGameState(isInGame) {
       mainApp.classList.add('hidden');
     }
     if (waitOverlay) waitOverlay.classList.add('hidden');
+    const pc = document.getElementById('puzzle-controls');
+    if (pc) {
+      pc.style.setProperty('display', 'none', 'important');
+      pc.classList.add('hidden');
+    }
     showMenu('menu-main');
     roomId = null;
     playerRole = 'player';
@@ -950,7 +968,7 @@ function drawArrow(from, to) {
   const backOff = 15; const endX = start.x + Math.cos(angle) * (length - backOff); const endY = start.y + Math.sin(angle) * (length - backOff);
   const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
   line.setAttribute("x1", start.x); line.setAttribute("y1", start.y); line.setAttribute("x2", endX); line.setAttribute("y2", endY);
-  line.setAttribute("stroke", "#f23c32"); line.setAttribute("stroke-width", "8"); line.setAttribute("opacity", "0.7"); line.setAttribute("marker-end", "url(#arrowhead)");
+  line.setAttribute("stroke", "#f29828"); line.setAttribute("stroke-width", "8"); line.setAttribute("opacity", "0.7"); line.setAttribute("marker-end", "url(#arrowhead)");
   svgLayer.appendChild(line);
 }
 function clearSVG() { svgLayer.innerHTML = ''; }
