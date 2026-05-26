@@ -178,8 +178,8 @@ function startOfflinePuzzle() {
 }
 
 function loadPuzzleData(fen, solution) {
-  closeWelcomeScreen();
   gameMode = 'puzzle';
+  closeWelcomeScreen();
   puzzleSolution = solution; 
   currentPuzzleStep = 0;
   game.load(fen);

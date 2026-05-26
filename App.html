@@ -239,8 +239,8 @@ function openWelcomeScreen() {
 }
 
 function startLocalMultiplayer() {
-  closeWelcomeScreen();
   gameMode = 'local';
+  closeWelcomeScreen();
   game.reset();
   boardFlipped = false;
   whiteTime = blackTime = null; // Unlimited for local
@@ -250,8 +250,8 @@ function startLocalMultiplayer() {
 }
 
 function startAIGame(color) {
-  closeWelcomeScreen();
   gameMode = 'ai';
+  closeWelcomeScreen();
   playerColor = color;
   const diffSlider = document.getElementById('ai-diff-slider');
   aiDepth = diffSlider ? parseInt(diffSlider.value) : 2;
