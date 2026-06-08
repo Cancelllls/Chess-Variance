@@ -50,11 +50,6 @@
         <div id="board-wrapper" style="position: relative;">
           <div id="board"></div>
           <svg id="board-svg" style="pointer-events: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10;">
-            <defs>
-              <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-                <path d="M0,0 L6,3 L0,6 Z" fill="#f23c32" fill-opacity="0.8" />
-              </marker>
-            </defs>
             <g id="svg-draw-layer"></g>
           </svg>
         </div>
@@ -94,8 +89,11 @@
             <button class="btn-secondary" style="width:100%; margin-bottom:12px;" onclick="showMenu('menu-online')">
               <span style="font-size:18px;">🌐</span> Play Online
             </button>
-            <button class="btn-secondary" style="width:100%;" id="btn-generate-puzzle" onclick="startOfflinePuzzle()">
+            <button class="btn-secondary" style="width:100%; margin-bottom:12px;" id="btn-generate-puzzle" onclick="startOfflinePuzzle()">
               <span style="font-size:18px;">🧩</span> Puzzles
+            </button>
+            <button class="btn-secondary" style="width:100%;" onclick="showMenu('menu-settings')">
+              <span style="font-size:18px;">⚙️</span> Settings
             </button>
           </div>
 
@@ -167,6 +165,219 @@
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
               <button class="btn-primary" onclick="startAIGame('w')">Play White</button>
               <button class="btn-primary" onclick="startAIGame('b')" style="background:#262421; color:#fff; border-color:#111; border-bottom-color:#000;">Play Black</button>
+            </div>
+          </div>
+          
+          <!-- Settings Menu -->
+          <div id="menu-settings" class="menu-section hidden">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <h3 style="color:var(--text-secondary); margin:0;">Settings</h3>
+              <button class="back-btn" style="background:none; border:none; color:var(--text-secondary); cursor:pointer; font-size:12px;" onclick="showMenu('menu-main')">← Back</button>
+            </div>
+            
+            <!-- Hidden select for JS compatibility -->
+            <select id="setting-board-theme" class="hidden" style="display:none;">
+              <option value="green">Classic Green</option>
+              <option value="wood">Wood Brown</option>
+              <option value="blue">Royal Blue</option>
+              <option value="charcoal">Charcoal Dark</option>
+              <option value="cyberpunk">Cyberpunk Neon</option>
+            </select>
+            
+            <!-- Settings Tabs -->
+            <div class="settings-tabs">
+              <div class="settings-tab active" data-tab="board" onclick="switchSettingsTab('board')">Board</div>
+              <div class="settings-tab" data-tab="gameplay" onclick="switchSettingsTab('gameplay')">Gameplay</div>
+              <div class="settings-tab" data-tab="sound" onclick="switchSettingsTab('sound')">Display</div>
+            </div>
+            
+            <div class="settings-list" style="text-align:left; max-height:320px; overflow-y:auto; padding-right:5px;">
+              
+              <!-- BOARD TAB -->
+              <div id="settings-tab-board" class="settings-section">
+                <div style="margin-bottom:8px; font-size:11px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px;">Board Theme</div>
+                <div class="theme-preview-grid">
+                  <div class="theme-preview-item active" data-theme="green" onclick="selectBoardTheme('green', this)">
+                    <div style="display:grid; grid-template-columns:1fr 1fr; width:48px; height:48px; border-radius:4px; overflow:hidden;">
+                      <div style="background:#eeeed2;"></div><div style="background:#769656;"></div>
+                      <div style="background:#769656;"></div><div style="background:#eeeed2;"></div>
+                    </div>
+                    <span>Green</span>
+                  </div>
+                  <div class="theme-preview-item" data-theme="wood" onclick="selectBoardTheme('wood', this)">
+                    <div style="display:grid; grid-template-columns:1fr 1fr; width:48px; height:48px; border-radius:4px; overflow:hidden;">
+                      <div style="background:#f0d9b5;"></div><div style="background:#b58863;"></div>
+                      <div style="background:#b58863;"></div><div style="background:#f0d9b5;"></div>
+                    </div>
+                    <span>Wood</span>
+                  </div>
+                  <div class="theme-preview-item" data-theme="blue" onclick="selectBoardTheme('blue', this)">
+                    <div style="display:grid; grid-template-columns:1fr 1fr; width:48px; height:48px; border-radius:4px; overflow:hidden;">
+                      <div style="background:#dee3e6;"></div><div style="background:#8ca2ad;"></div>
+                      <div style="background:#8ca2ad;"></div><div style="background:#dee3e6;"></div>
+                    </div>
+                    <span>Blue</span>
+                  </div>
+                  <div class="theme-preview-item" data-theme="charcoal" onclick="selectBoardTheme('charcoal', this)">
+                    <div style="display:grid; grid-template-columns:1fr 1fr; width:48px; height:48px; border-radius:4px; overflow:hidden;">
+                      <div style="background:#c8c8c8;"></div><div style="background:#6b6b6b;"></div>
+                      <div style="background:#6b6b6b;"></div><div style="background:#c8c8c8;"></div>
+                    </div>
+                    <span>Dark</span>
+                  </div>
+                  <div class="theme-preview-item" data-theme="cyberpunk" onclick="selectBoardTheme('cyberpunk', this)">
+                    <div style="display:grid; grid-template-columns:1fr 1fr; width:48px; height:48px; border-radius:4px; overflow:hidden;">
+                      <div style="background:#222;"></div><div style="background:#111;"></div>
+                      <div style="background:#111;"></div><div style="background:#222;"></div>
+                    </div>
+                    <span>Neon</span>
+                  </div>
+                </div>
+                
+                <div style="margin-bottom:8px; font-size:11px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px;">Piece Style</div>
+                <div class="setting-card" style="margin-bottom:12px;">
+                  <div class="setting-card-info"><label>Piece Set</label></div>
+                  <select id="setting-piece-style" class="depth-select" style="padding:6px 10px; font-size:12px;">
+                    <option value="classic">Classic Neo</option>
+                    <option value="neon">Cyberpunk Neon</option>
+                    <option value="wood">Rustic Wood</option>
+                    <option value="carbon">Carbon Silver</option>
+                  </select>
+                </div>
+                
+                <div class="setting-card">
+                  <div class="setting-card-info">
+                    <label>Board Coordinates</label>
+                    <span>Show rank & file labels</span>
+                  </div>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="setting-show-coords" checked>
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+              </div>
+              
+              <!-- GAMEPLAY TAB -->
+              <div id="settings-tab-gameplay" class="settings-section hidden">
+                <div class="setting-card">
+                  <div class="setting-card-info">
+                    <label>Move Hints</label>
+                    <span>Show legal move indicators</span>
+                  </div>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="setting-show-hints" checked>
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                
+                <div class="setting-card">
+                  <div class="setting-card-info">
+                    <label>Enable Premoves</label>
+                    <span>Queue moves before your turn</span>
+                  </div>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="setting-enable-premoves" checked>
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                
+                <div class="setting-card">
+                  <div class="setting-card-info">
+                    <label>Auto-Promote to Queen</label>
+                    <span>Skip promotion dialog</span>
+                  </div>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="setting-auto-queen">
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                
+                <div class="setting-card">
+                  <div class="setting-card-info">
+                    <label>Confirm Resign</label>
+                    <span>Ask before resigning</span>
+                  </div>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="setting-confirm-resign" checked>
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                
+                <div class="setting-card">
+                  <div class="setting-card-info">
+                    <label>Highlight Last Move</label>
+                    <span>Show colored squares for last move</span>
+                  </div>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="setting-highlight-moves" checked>
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                
+                <div class="setting-card">
+                  <div class="setting-card-info">
+                    <label>Highlight Color</label>
+                  </div>
+                  <div class="highlight-color-grid">
+                    <div class="highlight-color-swatch active" data-color="yellow" style="background:rgba(255,255,0,0.6);" onclick="selectHighlightColor('yellow', this)"></div>
+                    <div class="highlight-color-swatch" data-color="green" style="background:rgba(129,182,76,0.6);" onclick="selectHighlightColor('green', this)"></div>
+                    <div class="highlight-color-swatch" data-color="blue" style="background:rgba(59,125,216,0.6);" onclick="selectHighlightColor('blue', this)"></div>
+                    <div class="highlight-color-swatch" data-color="orange" style="background:rgba(232,145,45,0.6);" onclick="selectHighlightColor('orange', this)"></div>
+                  </div>
+                </div>
+                
+                <div class="setting-card">
+                  <div class="setting-card-info">
+                    <label>Animation Speed</label>
+                    <span id="animation-speed-label">150ms</span>
+                  </div>
+                  <input type="range" id="setting-animation-speed" class="setting-range" min="0" max="300" step="25" value="150">
+                </div>
+              </div>
+              
+              <!-- SOUND & DISPLAY TAB -->
+              <div id="settings-tab-sound" class="settings-section hidden">
+                <div class="setting-card">
+                  <div class="setting-card-info">
+                    <label>Sound Effects</label>
+                    <span>Move, capture, and check sounds</span>
+                  </div>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="setting-show-sounds" checked>
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                
+                <div class="setting-card">
+                  <div class="setting-card-info">
+                    <label>Evaluation Bar</label>
+                    <span>Show engine eval beside board</span>
+                  </div>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="setting-show-eval" checked>
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                
+                <div class="setting-card">
+                  <div class="setting-card-info">
+                    <label>Captured Pieces</label>
+                    <span>Show taken pieces near clocks</span>
+                  </div>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="setting-show-captured" checked>
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                
+                <div class="setting-card" style="border:none; background:none;">
+                  <div class="setting-card-info">
+                    <label style="color:var(--text-secondary);">Board Size</label>
+                    <span>Use browser zoom (Ctrl +/-) to resize</span>
+                  </div>
+                </div>
+              </div>
+              
             </div>
           </div>
           

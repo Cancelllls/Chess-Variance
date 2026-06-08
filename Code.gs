@@ -30,6 +30,22 @@ function loadGame() {
 
 // ---- Online Multiplayer Backend Functions ----
 
+// PERF: Cache key helper — shorter keys = faster cache ops
+function _ck(id) { return 'cs_' + id; }
+
+// PERF: Lock-free internal state reader — used by functions that already hold a lock
+function _readState(gameId) {
+  var raw = CacheService.getScriptCache().get(_ck(gameId));
+  if (!raw) return null;
+  return JSON.parse(raw);
+}
+
+// PERF: Internal state writer — increments version on every mutation
+function _writeState(gameId, state) {
+  state.version = (state.version || 0) + 1;
+  CacheService.getScriptCache().put(_ck(gameId), JSON.stringify(state), 21600);
+}
+
 function createRoom(playerName, timeControl) {
   var roomId = '';
   var characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -54,28 +70,67 @@ function createRoom(playerName, timeControl) {
     timeControl: tc,
     lastHeartbeatWhite: now,
     lastHeartbeatBlack: now,
-    isPaused: false
+    isPaused: false,
+    version: 1
   };
-  CacheService.getScriptCache().put('chess_state_' + roomId, JSON.stringify(state), 21600);
+  CacheService.getScriptCache().put(_ck(roomId), JSON.stringify(state), 21600);
   return roomId;
 }
 
-function getGameState(gameId, playerName) {
+// PERF: Optimized getGameState with version-based fast path and conditional locking
+function getGameState(gameId, playerName, lastVersion) {
+  var cache = CacheService.getScriptCache();
+  var cachedData = cache.get(_ck(gameId));
+  
+  if (cachedData == null) {
+    return { success: false, error: "ROOM_NOT_FOUND" };
+  }
+  
+  var state = JSON.parse(cachedData);
+  var now = Date.now();
+  var role = "spectator";
+
+  if (state.whitePlayer === playerName) role = "w";
+  else if (state.blackPlayer === playerName) role = "b";
+  
+  // PERF: Determine if we actually need a write (lock) — player join or stale heartbeat
+  var needsJoin = (!state.blackPlayer && playerName && role === "spectator");
+  var heartbeatStale = false;
+  if (role === 'w') heartbeatStale = (now - state.lastHeartbeatWhite > 5000);
+  else if (role === 'b') heartbeatStale = (now - state.lastHeartbeatBlack > 5000);
+  
+  var needsWrite = needsJoin || heartbeatStale;
+  
+  // PERF: Version-based fast path — if nothing changed AND no write needed, skip entirely
+  if (!needsWrite && lastVersion && state.version === lastVersion) {
+    // Compute pause status without writing — read-only check
+    var wOffline = (now - state.lastHeartbeatWhite > 30000);
+    var bOffline = (now - state.lastHeartbeatBlack > 30000);
+    var currentlyPaused = (wOffline || bOffline) && !state.gameOver;
+    return { success: true, noChange: true, isPaused: currentlyPaused, role: role };
+  }
+  
+  // PERF: Lock-free read path — if no writes needed, serve without lock
+  if (!needsWrite) {
+    // Compute pause status (read-only, no lock needed)
+    var wOffline = (now - state.lastHeartbeatWhite > 30000);
+    var bOffline = (now - state.lastHeartbeatBlack > 30000);
+    state.isPaused = (wOffline || bOffline) && !state.gameOver;
+    return { success: true, data: state, role: role, version: state.version };
+  }
+  
+  // Needs write — acquire lock
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000);
-    var cache = CacheService.getScriptCache();
-    var cachedData = cache.get('chess_state_' + gameId);
     
-    if (cachedData == null) {
-      // (Simplified fallback for brevity, assuming room existence)
-      return { success: false, error: "ROOM_NOT_FOUND" };
-    }
+    // Re-read under lock to avoid race conditions
+    cachedData = cache.get(_ck(gameId));
+    if (!cachedData) return { success: false, error: "ROOM_NOT_FOUND" };
+    state = JSON.parse(cachedData);
     
-    var state = JSON.parse(cachedData);
-    var now = Date.now();
-    var role = "spectator";
-
+    // Re-determine role under lock
+    role = "spectator";
     if (state.whitePlayer === playerName) role = "w";
     else if (state.blackPlayer === playerName) role = "b";
     else if (!state.blackPlayer && playerName) {
@@ -84,9 +139,9 @@ function getGameState(gameId, playerName) {
       state.lastHeartbeatBlack = now;
     }
 
-    // --- HEARTBEAT & PAUSE LOGIC ---
-    if (role === 'w') state.lastHeartbeatWhite = now;
-    if (role === 'b') state.lastHeartbeatBlack = now;
+    // PERF: Update heartbeat only if stale (>5s)
+    if (role === 'w' && (now - state.lastHeartbeatWhite > 5000)) state.lastHeartbeatWhite = now;
+    if (role === 'b' && (now - state.lastHeartbeatBlack > 5000)) state.lastHeartbeatBlack = now;
 
     var wOffline = (now - state.lastHeartbeatWhite > 30000);
     var bOffline = (now - state.lastHeartbeatBlack > 30000);
@@ -94,13 +149,12 @@ function getGameState(gameId, playerName) {
     var shouldBePaused = (wOffline || bOffline) && !state.gameOver;
     
     if (state.isPaused && !shouldBePaused) {
-      // Game resuming: reset move timestamp so no time was lost during disconnection
       state.lastMoveTimestamp = now;
     }
     state.isPaused = shouldBePaused;
 
-    cache.put('chess_state_' + gameId, JSON.stringify(state), 21600);
-    return { success: true, data: state, role: role };
+    _writeState(gameId, state);
+    return { success: true, data: state, role: role, version: state.version };
   } catch(e) {
     return { success: false, error: "CACHE_ERROR", message: e.toString() };
   } finally {
@@ -113,11 +167,8 @@ function makeMove(gameId, fenString, pgnString, isGameOver, moveCount, playerCol
   try {
     lock.waitLock(10000);
     
-    var cache = CacheService.getScriptCache();
-    var cachedData = cache.get('chess_state_' + gameId);
-    if (!cachedData) return { success: false, error: "ROOM_EXPIRED" };
-    
-    var state = JSON.parse(cachedData);
+    var state = _readState(gameId);
+    if (!state) return { success: false, error: "ROOM_EXPIRED" };
     if (state.gameOver) return { success: false, error: "GAME_ALREADY_OVER" };
 
     // Update Clocks ONLY if not paused
@@ -155,12 +206,11 @@ function makeMove(gameId, fenString, pgnString, isGameOver, moveCount, playerCol
        state.gameOver = { result: result, reason: reason };
     }
 
-    cache.put('chess_state_' + gameId, JSON.stringify(state), 21600);
+    _writeState(gameId, state);
     
+    // PERF: Only write to sheet on game over — removed periodic writes from hot path
     if (state.gameOver) {
-      writeToSheet(gameId, fenString, state.gameOver.result + ": " + state.gameOver.reason);
-    } else if (moveCount > 0 && moveCount % 10 === 0) {
-      writeToSheet(gameId, fenString);
+      try { writeToSheet(gameId, fenString, state.gameOver.result + ": " + state.gameOver.reason); } catch(se) {}
     }
     
     return { success: true };
@@ -171,15 +221,15 @@ function makeMove(gameId, fenString, pgnString, isGameOver, moveCount, playerCol
   }
 }
 
+// PERF: Eliminated double-locking — uses _readState instead of getGameState
 function offerDraw(gameId, playerColor) {
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(5000);
-    var res = getGameState(gameId);
-    if (!res.success) return res;
-    var state = res.data;
+    var state = _readState(gameId);
+    if (!state) return { success: false, error: "ROOM_EXPIRED" };
     state.drawOffer = playerColor;
-    CacheService.getScriptCache().put('chess_state_' + gameId, JSON.stringify(state), 21600);
+    _writeState(gameId, state);
     return { success: true };
   } catch(e) {
     return { success: false, error: "DRAW_ERROR", message: e.toString() };
@@ -188,20 +238,23 @@ function offerDraw(gameId, playerColor) {
   }
 }
 
+// PERF: Eliminated double-locking
 function resolveDraw(gameId, isAccepted) {
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000);
-    var res = getGameState(gameId);
-    if (!res.success) return res;
-    var state = res.data;
+    var state = _readState(gameId);
+    if (!state) return { success: false, error: "ROOM_EXPIRED" };
     
     state.drawOffer = null;
     if (isAccepted) {
       state.gameOver = { result: "1/2-1/2", reason: "Mutual Agreement" };
-      writeToSheet(gameId, state.fen, "1/2-1/2: Mutual Agreement");
     }
-    CacheService.getScriptCache().put('chess_state_' + gameId, JSON.stringify(state), 21600);
+    _writeState(gameId, state);
+    
+    if (isAccepted) {
+      try { writeToSheet(gameId, state.fen, "1/2-1/2: Mutual Agreement"); } catch(se) {}
+    }
     return { success: true };
   } catch(e) {
     return { success: false, error: "RESOLVE_DRAW_ERROR", message: e.toString() };
@@ -210,20 +263,20 @@ function resolveDraw(gameId, isAccepted) {
   }
 }
 
+// PERF: Eliminated double-locking
 function resignGame(gameId, resigningColor) {
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000);
-    var res = getGameState(gameId);
-    if (!res.success) return res;
-    var state = res.data;
+    var state = _readState(gameId);
+    if (!state) return { success: false, error: "ROOM_EXPIRED" };
     
     var winner = resigningColor === 'w' ? 'Black' : 'White';
     var result = resigningColor === 'w' ? '0-1' : '1-0';
     state.gameOver = { result: result, reason: winner + " won by Resignation" };
     
-    writeToSheet(gameId, state.fen, result + ": " + state.gameOver.reason);
-    CacheService.getScriptCache().put('chess_state_' + gameId, JSON.stringify(state), 21600);
+    _writeState(gameId, state);
+    try { writeToSheet(gameId, state.fen, result + ": " + state.gameOver.reason); } catch(se) {}
     return { success: true };
   } catch(e) {
     return { success: false, error: "RESIGN_ERROR", message: e.toString() };
@@ -232,15 +285,15 @@ function resignGame(gameId, resigningColor) {
   }
 }
 
+// PERF: Eliminated double-locking
 function requestTakeback(gameId, playerColor) {
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(5000);
-    var res = getGameState(gameId);
-    if (!res.success) return res;
-    var state = res.data;
+    var state = _readState(gameId);
+    if (!state) return { success: false, error: "ROOM_EXPIRED" };
     state.takebackRequest = playerColor;
-    CacheService.getScriptCache().put('chess_state_' + gameId, JSON.stringify(state), 21600);
+    _writeState(gameId, state);
     return { success: true };
   } catch(e) {
     return { success: false, error: "TAKEBACK_ERROR", message: e.toString() };
@@ -249,14 +302,13 @@ function requestTakeback(gameId, playerColor) {
   }
 }
 
+// PERF: Uses _readState, shorter cache keys
 function resolveTakeback(gameId, isAccepted, fallbackFen, fallbackPgn) {
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000);
-    var cachedData = CacheService.getScriptCache().get('chess_state_' + gameId);
-    if (!cachedData) return { success: false, error: "ROOM_EXPIRED" };
-    
-    var state = JSON.parse(cachedData);
+    var state = _readState(gameId);
+    if (!state) return { success: false, error: "ROOM_EXPIRED" };
     if (!state.takebackRequest) return { success: false, error: "STALE_REQUEST" }; 
     
     state.takebackRequest = null;
@@ -265,7 +317,7 @@ function resolveTakeback(gameId, isAccepted, fallbackFen, fallbackPgn) {
       state.pgn = fallbackPgn;
       state.lastMoveTimestamp = Date.now();
     }
-    CacheService.getScriptCache().put('chess_state_' + gameId, JSON.stringify(state), 21600);
+    _writeState(gameId, state);
     return { success: true };
   } catch(e) {
     return { success: false, error: "RESOLVE_ERROR", message: e.toString() };

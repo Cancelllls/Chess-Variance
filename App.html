@@ -18,8 +18,18 @@ try {
 }
 let boardFlipped = false;
 let showCoords = true;
-let showHints = false;
+let showHints = true;
 let isGameOverState = false;
+let currentPieceStyle = 'classic';
+let boardTheme = 'green';
+let showEvalBar = true;
+let playSounds = true;
+let autoQueen = false;
+let confirmResign = true;
+let animationSpeed = 150;
+let highlightMoves = true;
+let highlightColor = 'yellow';
+let showCaptured = true;
 
 // Multiplayer & Mode State
 let gameMode = 'local'; // 'local', 'ai', 'online', 'puzzle', 'analysis'
@@ -81,11 +91,13 @@ let pendingPremove = null;
 let isRightClickDragging = false;
 let rightClickStartSq = null;
 let currentRightClickSq = null;
+let ghostArrowEl = null;
 
 // Resilience State
 let pollRetryCount = 0;
 let backoffDelay = 1000;
-let connectionStatus = 'green'; 
+let connectionStatus = 'green';
+let lastKnownVersion = 0; 
 
 // --- AUDIO & HAPTICS CONTROLLER ---
 const AudioController = {
@@ -279,6 +291,8 @@ function showMenu(id) {
 function resetWholeGame() {
   // 1. Reset JavaScript chess state
   if (typeof game !== 'undefined' && game.reset) game.reset();
+  visualGame = game;
+  clearSVG();
   
   // 2. Reset analysis/multiplayer states
   isReviewing = false;
@@ -385,6 +399,9 @@ function setGameState(isInGame) {
     if (clockInterval) clearInterval(clockInterval);
     clockInterval = setInterval(updateClocks, 1000);
   } else {
+    resetWholeGame();
+    updateBoard();
+    
     if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
     if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
     
@@ -529,6 +546,7 @@ function startPolling() {
   if (pollInterval) clearInterval(pollInterval);
   pollRetryCount = 0;
   backoffDelay = 1000;
+  lastKnownVersion = 0;
 
   const poll = () => {
     if (gameMode !== 'online' || !roomId) return;
@@ -544,6 +562,21 @@ function startPolling() {
         pollRetryCount = 0;
         backoffDelay = 1000;
         setConnectionStatus('green');
+
+        // PERF: Version-based fast path — nothing changed on server
+        if (res.noChange) {
+          // Only update pause status from lightweight response
+          const banner = document.getElementById('opponent-offline-banner');
+          if (res.isPaused) { isGamePaused = true; banner.classList.remove('hidden'); }
+          else { isGamePaused = false; banner.classList.add('hidden'); }
+          // PERF: Adaptive polling — faster when waiting for opponent
+          const adaptiveDelay = (playerRole !== 'spectator' && game.turn() === playerColor) ? 2000 : 800;
+          pollInterval = setTimeout(poll, adaptiveDelay);
+          return;
+        }
+
+        // Track version for fast-path on next poll
+        if (res.version) lastKnownVersion = res.version;
 
         const state = res.data;
         onlineGameState = state;
@@ -567,7 +600,6 @@ function startPolling() {
 
         const tbToast = document.getElementById('takeback-toast');
         const drToast = document.getElementById('draw-toast');
-        const isTakebackActive = !!state.takebackRequest;
 
         // Waiting overlay logic
         const waitingOverlay = document.getElementById('waiting-overlay');
@@ -654,21 +686,23 @@ function startPolling() {
           }
         }
 
-        pollInterval = setTimeout(poll, 1200);
+        // PERF: Adaptive polling — faster when waiting for opponent's move
+        const adaptiveDelay = (playerRole !== 'spectator' && game.turn() === playerColor) ? 2000 : 800;
+        pollInterval = setTimeout(poll, adaptiveDelay);
         })
         .withFailureHandler(() => {
         handlePollError();
         })
-        .getGameState(roomId, playerName);
+        .getGameState(roomId, playerName, lastKnownVersion);
         };
 
         const handlePollError = () => {
         pollRetryCount++;
         if (pollRetryCount > 3) {
-        setConnectionStatus('yellow'); // Shows the infinite "Reconnecting..." overlay only after 3 tries
+        setConnectionStatus('yellow');
         }
 
-        backoffDelay = Math.min(5000, backoffDelay * 2); // Cap at 5s, infinite retries
+        backoffDelay = Math.min(5000, backoffDelay * 2);
         pollInterval = setTimeout(poll, backoffDelay);
         };
   pollInterval = setTimeout(poll, 1000);
@@ -990,10 +1024,12 @@ function updateBoard() {
         sq.appendChild(existingPiece);
       }
       const targetClass = `piece ${piece.color}${piece.type.toUpperCase()}`;
-      if (existingPiece.className !== targetClass) {
+      if (existingPiece.className !== targetClass || existingPiece.dataset.pieceStyle !== currentPieceStyle) {
         existingPiece.className = targetClass;
+        existingPiece.dataset.pieceStyle = currentPieceStyle;
         const imgKey = piece.color + piece.type.toUpperCase();
-        existingPiece.style.backgroundImage = pieceImages[imgKey] ? `linear-gradient(transparent, transparent), url("${pieceImages[imgKey]}")` : 'none';
+        const pieceImg = getPieceImage(imgKey, currentPieceStyle);
+        existingPiece.style.backgroundImage = pieceImg !== 'none' ? `linear-gradient(transparent, transparent), url("${pieceImg}")` : 'none';
       }
       existingPiece.dataset.square = sq.dataset.square;
       existingPiece.style.transform = boardFlipped ? 'rotate(180deg)' : '';
@@ -1016,17 +1052,19 @@ function updateBoard() {
     const visualRow = boardFlipped ? (7 - r) : r;
     const visualCol = boardFlipped ? (7 - c) : c;
     
-    if (visualCol === 0) {
-      const rank = document.createElement('div');
-      rank.className = 'coord coord-rank';
-      rank.innerText = 8 - visualRow;
-      sq.appendChild(rank);
-    }
-    if (visualRow === 7) {
-      const file = document.createElement('div');
-      file.className = 'coord coord-file';
-      file.innerText = String.fromCharCode(97 + visualCol);
-      sq.appendChild(file);
+    if (showCoords) {
+      if (visualCol === 0) {
+        const rank = document.createElement('div');
+        rank.className = 'coord coord-rank';
+        rank.innerText = 8 - visualRow;
+        sq.appendChild(rank);
+      }
+      if (visualRow === 7) {
+        const file = document.createElement('div');
+        file.className = 'coord coord-file';
+        file.innerText = String.fromCharCode(97 + visualCol);
+        sq.appendChild(file);
+      }
     }
   });
 
@@ -1124,6 +1162,7 @@ function updateBoard() {
   if (gameMode !== 'online' && gameMode !== 'analysis' && gameMode !== 'idle') {
     triggerEvaluation();
   }
+  syncSidebarHeight();
 }
 
 function updateCapturedPieces(boardArray) {
@@ -1167,10 +1206,9 @@ function updateCapturedPieces(boardArray) {
     let html = '';
     arr.forEach(p => {
       const imgKey = p.color + p.type.toUpperCase();
-      if (pieceImages[imgKey]) {
-        // Strip any single quotes from the data URI to prevent breaking the inline style,
-        // or just use no quotes inside the url() and single quotes for the style attribute.
-        const safeUrl = pieceImages[imgKey].replace(/'/g, "%27");
+      const pieceImg = getPieceImage(imgKey, currentPieceStyle);
+      if (pieceImg !== 'none') {
+        const safeUrl = pieceImg.replace(/'/g, "%27");
         html += `<div style='width:20px; height:20px; background-size:contain; background-repeat:no-repeat; background-image:url("${safeUrl}"); margin-right:-8px;'></div>`;
       }
     });
@@ -1414,71 +1452,203 @@ function getSquareCenter(sq) {
   const boardRect = boardEl.getBoundingClientRect();
   return { x: (rect.left - boardRect.left) + rect.width / 2, y: (rect.top - boardRect.top) + rect.height / 2 };
 }
-function drawCircle(sq) {
-  const center = getSquareCenter(sq);
-  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-  circle.setAttribute("cx", center.x); circle.setAttribute("cy", center.y); circle.setAttribute("r", "40%");
-  circle.setAttribute("fill", "none"); circle.setAttribute("stroke", "#f23c32"); circle.setAttribute("stroke-width", "4"); circle.setAttribute("opacity", "0.7");
-  svgLayer.appendChild(circle);
+let drawnCircles = [];
+let drawnArrows = [];
+
+// Chess.com arrow color scheme
+function getDrawColor(shift, alt, ctrl) {
+  if (shift) return "#c33";     // Red
+  if (alt) return "#3b7dd8";    // Blue
+  if (ctrl) return "#e6e622";   // Yellow
+  return "#e8912d";             // Orange (Default - chess.com style)
 }
-function drawArrow(from, to) {
-  const start = getSquareCenter(from);
-  const end = getSquareCenter(to);
+
+function drawCircle(sq, shift = false, alt = false, ctrl = false) {
+  const color = getDrawColor(shift, alt, ctrl);
+  const index = drawnCircles.findIndex(c => c.sq === sq);
   
-  // Calculate square-based distances to detect Knight moves
-  const startCol = from.charCodeAt(0) - 97;
-  const startRow = parseInt(from[1]) - 1;
-  const endCol = to.charCodeAt(0) - 97;
-  const endRow = parseInt(to[1]) - 1;
-  
-  const dCol = Math.abs(startCol - endCol);
-  const dRow = Math.abs(startRow - endRow);
-  
-  const isKnightMove = (dCol === 1 && dRow === 2) || (dCol === 2 && dRow === 1);
-  
-  if (isKnightMove) {
-    // Calculate elbow: Move 2 squares orthogonally then 1 square
-    let elbow;
-    if (dCol === 2) {
-      // 2 squares sideways, 1 square up/down
-      elbow = { x: end.x, y: start.y };
+  if (index !== -1) {
+    const existing = drawnCircles[index];
+    if (existing.color === color) {
+      existing.element.remove();
+      drawnCircles.splice(index, 1);
     } else {
-      // 2 squares up/down, 1 square sideways
-      elbow = { x: start.x, y: end.y };
+      existing.color = color;
+      existing.element.setAttribute("stroke", color);
     }
-    
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    const d = `M ${start.x} ${start.y} L ${elbow.x} ${elbow.y} L ${end.x} ${end.y}`;
-    path.setAttribute("d", d);
-    path.setAttribute("fill", "none");
-    path.setAttribute("stroke", "#f29828");
-    path.setAttribute("stroke-width", "8");
-    path.setAttribute("opacity", "0.7");
-    path.setAttribute("stroke-linecap", "round");
-    path.setAttribute("stroke-linejoin", "round");
-    path.setAttribute("marker-end", "url(#arrowhead)");
-    svgLayer.appendChild(path);
   } else {
-    // Straight line for other moves
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    const angle = Math.atan2(dy, dx);
-    const length = Math.sqrt(dx*dx + dy*dy);
-    const backOff = 15;
-    const endX = start.x + Math.cos(angle) * (length - backOff);
-    const endY = start.y + Math.sin(angle) * (length - backOff);
+    const center = getSquareCenter(sq);
+    const el = boardEl.querySelector(`[data-square="${sq}"]`);
+    if (!el) return;
+    const sqSize = el.getBoundingClientRect().width;
     
-    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-    line.setAttribute("x1", start.x); line.setAttribute("y1", start.y); line.setAttribute("x2", endX); line.setAttribute("y2", endY);
-    line.setAttribute("stroke", "#f29828"); line.setAttribute("stroke-width", "8"); line.setAttribute("opacity", "0.7"); line.setAttribute("marker-end", "url(#arrowhead)");
-    svgLayer.appendChild(line);
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", center.x);
+    circle.setAttribute("cy", center.y);
+    circle.setAttribute("r", sqSize * 0.42);
+    circle.setAttribute("fill", "none");
+    circle.setAttribute("stroke", color);
+    circle.setAttribute("stroke-width", sqSize * 0.07);
+    circle.setAttribute("opacity", "0.8");
+    circle.style.pointerEvents = "none";
+    svgLayer.appendChild(circle);
+    
+    drawnCircles.push({ sq, color, element: circle });
   }
 }
-function clearSVG() { svgLayer.innerHTML = ''; }
+
+// Chess.com-style arrow path builder — single closed SVG path for shaft+head
+function buildArrowPath(fromSq, toSq) {
+  const start = getSquareCenter(fromSq);
+  const end = getSquareCenter(toSq);
+  if (!start || !end) return null;
+  
+  const el = boardEl.querySelector(`[data-square="${fromSq}"]`);
+  if (!el) return null;
+  const sqSize = el.getBoundingClientRect().width;
+  
+  const shaftW = sqSize * 0.22;   // shaft width
+  const headW = sqSize * 0.60;    // arrowhead width
+  const headL = sqSize * 0.40;    // arrowhead length
+  const hw = shaftW / 2;
+  const hhw = headW / 2;
+  
+  const startCol = fromSq.charCodeAt(0) - 97;
+  const startRow = parseInt(fromSq[1]) - 1;
+  const endCol = toSq.charCodeAt(0) - 97;
+  const endRow = parseInt(toSq[1]) - 1;
+  const dCol = Math.abs(startCol - endCol);
+  const dRow = Math.abs(startRow - endRow);
+  const isKnight = (dCol === 1 && dRow === 2) || (dCol === 2 && dRow === 1);
+  
+  if (isKnight) {
+    // L-shaped knight arrow
+    const elbow = dCol === 2 ? { x: end.x, y: start.y } : { x: start.x, y: end.y };
+    const angle1 = Math.atan2(elbow.y - start.y, elbow.x - start.x);
+    const angle2 = Math.atan2(end.y - elbow.y, end.x - elbow.x);
+    const cos1 = Math.cos(angle1), sin1 = Math.sin(angle1);
+    const cos2 = Math.cos(angle2), sin2 = Math.sin(angle2);
+    
+    // Tip of arrowhead (pulled back slightly from center)
+    const tipX = end.x - cos2 * (sqSize * 0.05);
+    const tipY = end.y - sin2 * (sqSize * 0.05);
+    // Base of arrowhead
+    const baseX = tipX - cos2 * headL;
+    const baseY = tipY - sin2 * headL;
+    // Arrowhead left/right wings
+    const hlX = baseX + sin2 * hhw, hlY = baseY - cos2 * hhw;
+    const hrX = baseX - sin2 * hhw, hrY = baseY + cos2 * hhw;
+    // Arrowhead meets shaft
+    const slX = baseX + sin2 * hw, slY = baseY - cos2 * hw;
+    const srX = baseX - sin2 * hw, srY = baseY + cos2 * hw;
+    // Shaft start
+    const sX = start.x, sY = start.y;
+    // Shaft sides at start (perpendicular to first segment)
+    const s1X = sX + sin1 * hw, s1Y = sY - cos1 * hw;
+    const s2X = sX - sin1 * hw, s2Y = sY + cos1 * hw;
+    // Elbow outer/inner corners (perpendicular to segments)
+    const e1oX = elbow.x + sin1 * hw, e1oY = elbow.y - cos1 * hw;
+    const e1iX = elbow.x - sin1 * hw, e1iY = elbow.y + cos1 * hw;
+    const e2oX = elbow.x + sin2 * hw, e2oY = elbow.y - cos2 * hw;
+    const e2iX = elbow.x - sin2 * hw, e2iY = elbow.y + cos2 * hw;
+    
+    return `M ${s1X} ${s1Y} L ${e1oX} ${e1oY} L ${e2oX} ${e2oY} L ${slX} ${slY} L ${hlX} ${hlY} L ${tipX} ${tipY} L ${hrX} ${hrY} L ${srX} ${srY} L ${e2iX} ${e2iY} L ${e1iX} ${e1iY} L ${s2X} ${s2Y} Z`;
+  } else {
+    // Straight arrow
+    const angle = Math.atan2(end.y - start.y, end.x - start.x);
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    
+    // Tip of arrowhead
+    const tipX = end.x - cos * (sqSize * 0.05);
+    const tipY = end.y - sin * (sqSize * 0.05);
+    // Base of arrowhead
+    const baseX = tipX - cos * headL;
+    const baseY = tipY - sin * headL;
+    // Arrowhead wings
+    const hlX = baseX + sin * hhw, hlY = baseY - cos * hhw;
+    const hrX = baseX - sin * hhw, hrY = baseY + cos * hhw;
+    // Shaft meets head
+    const slX = baseX + sin * hw, slY = baseY - cos * hw;
+    const srX = baseX - sin * hw, srY = baseY + cos * hw;
+    // Shaft start (slightly offset from center)
+    const sX = start.x + cos * (sqSize * 0.05);
+    const sY = start.y + sin * (sqSize * 0.05);
+    const s1X = sX + sin * hw, s1Y = sY - cos * hw;
+    const s2X = sX - sin * hw, s2Y = sY + cos * hw;
+    
+    // Rounded start cap using arc
+    return `M ${s1X} ${s1Y} L ${slX} ${slY} L ${hlX} ${hlY} L ${tipX} ${tipY} L ${hrX} ${hrY} L ${srX} ${srY} L ${s2X} ${s2Y} A ${hw} ${hw} 0 0 1 ${s1X} ${s1Y} Z`;
+  }
+}
+
+function drawArrow(from, to, shift = false, alt = false, ctrl = false) {
+  const color = getDrawColor(shift, alt, ctrl);
+  const index = drawnArrows.findIndex(a => a.from === from && a.to === to);
+  
+  if (index !== -1) {
+    const existing = drawnArrows[index];
+    if (existing.color === color) {
+      existing.element.remove();
+      drawnArrows.splice(index, 1);
+    } else {
+      existing.color = color;
+      existing.element.setAttribute("fill", color);
+    }
+  } else {
+    const pathD = buildArrowPath(from, to);
+    if (!pathD) return;
+    
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", pathD);
+    path.setAttribute("fill", color);
+    path.setAttribute("opacity", "0.8");
+    path.style.pointerEvents = "none";
+    svgLayer.appendChild(path);
+    
+    drawnArrows.push({ from, to, color, element: path });
+  }
+}
+
+// Ghost/preview arrow shown during right-click drag
+function drawGhostArrow(from, to) {
+  clearGhostArrow();
+  if (!from || !to || from === to) return;
+  
+  const pathD = buildArrowPath(from, to);
+  if (!pathD) return;
+  
+  ghostArrowEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  ghostArrowEl.setAttribute("d", pathD);
+  ghostArrowEl.setAttribute("fill", "#e8912d");
+  ghostArrowEl.setAttribute("opacity", "0.5");
+  ghostArrowEl.style.pointerEvents = "none";
+  svgLayer.appendChild(ghostArrowEl);
+}
+
+function clearGhostArrow() {
+  if (ghostArrowEl) {
+    ghostArrowEl.remove();
+    ghostArrowEl = null;
+  }
+}
+
+function clearSVG() {
+  if (svgLayer) svgLayer.innerHTML = '';
+  drawnCircles = [];
+  drawnArrows = [];
+  ghostArrowEl = null;
+}
+
 function highlightSquare(sq) { const el = boardEl.querySelector(`[data-square="${sq}"]`); if (el) el.classList.add('selected'); }
 function clearHighlights() { boardEl.querySelectorAll('.square').forEach(sq => sq.classList.remove('selected', 'legal-move')); }
-function highlightLegalMoves(sq) { game.moves({ square: sq, verbose: true }).forEach(m => { const el = boardEl.querySelector(`[data-square="${m.to}"]`); if (el) el.classList.add('legal-move'); }); }
-function showPromotionDialog() { promoDialog.classList.remove('hidden'); }
+function highlightLegalMoves(sq) { 
+  if (!showHints) return;
+  game.moves({ square: sq, verbose: true }).forEach(m => { const el = boardEl.querySelector(`[data-square="${m.to}"]`); if (el) el.classList.add('legal-move'); }); 
+}
+function showPromotionDialog() {
+  updatePromotionDialogPieces();
+  if (promoDialog) promoDialog.classList.remove('hidden');
+}
 function makeAIMove() { 
   if (gameMode !== 'ai' || game.game_over()) return; 
   
@@ -1507,6 +1677,309 @@ function makeAIMove() {
     }
   });
 }
+
+function getPieceImage(key, style) {
+  const baseSvg = pieceImages[key];
+  if (!baseSvg) return 'none';
+  if (style === 'classic') return baseSvg;
+
+  let modifiedSvg = baseSvg;
+  if (style === 'neon') {
+    if (key.startsWith('w')) {
+      modifiedSvg = modifiedSvg
+        .replace(/fill='%23fff'/gi, "fill='%230d1b2a'")
+        .replace(/fill='%23FFF'/gi, "fill='%230d1b2a'")
+        .replace(/stroke='%23000'/gi, "stroke='%2300f3ff'")
+        .replace(/stroke='%23000000'/gi, "stroke='%2300f3ff'");
+    } else {
+      modifiedSvg = modifiedSvg
+        .replace(/stroke='%23000'/gi, "stroke='%23ff0055'")
+        .replace(/fill='%23000'/gi, "fill='%231b0d22'")
+        .replace(/stroke='%23ececec'/gi, "stroke='%2300f3ff'")
+        .replace(/fill='%23ececec'/gi, "fill='%2300f3ff'");
+      if (key === 'bQ' || key === 'bR') {
+        modifiedSvg = modifiedSvg.replace(/fill-rule='evenodd'/gi, "fill='%231b0d22' fill-rule='evenodd'");
+      } else if (key === 'bP') {
+        modifiedSvg = modifiedSvg.replace(/stroke='%23ff0055'/gi, "fill='%231b0d22' stroke='%23ff0055'");
+      }
+    }
+  } else if (style === 'wood') {
+    if (key.startsWith('w')) {
+      modifiedSvg = modifiedSvg
+        .replace(/fill='%23fff'/gi, "fill='%23d7a15c'")
+        .replace(/fill='%23FFF'/gi, "fill='%23d7a15c'")
+        .replace(/stroke='%23000'/gi, "stroke='%235c3a21'")
+        .replace(/stroke='%23000000'/gi, "stroke='%235c3a21'");
+    } else {
+      modifiedSvg = modifiedSvg
+        .replace(/stroke='%23000'/gi, "stroke='%235c3a21'")
+        .replace(/fill='%23000'/gi, "fill='%235c3a21'")
+        .replace(/stroke='%23ececec'/gi, "stroke='%23d7a15c'")
+        .replace(/fill='%23ececec'/gi, "fill='%23d7a15c'");
+      if (key === 'bQ' || key === 'bR') {
+        modifiedSvg = modifiedSvg.replace(/fill-rule='evenodd'/gi, "fill='%235c3a21' fill-rule='evenodd'");
+      } else if (key === 'bP') {
+        modifiedSvg = modifiedSvg.replace(/stroke='%235c3a21'/gi, "fill='%235c3a21' stroke='%235c3a21'");
+      }
+    }
+  } else if (style === 'carbon') {
+    if (key.startsWith('w')) {
+      modifiedSvg = modifiedSvg
+        .replace(/fill='%23fff'/gi, "fill='%23e5e5e5'")
+        .replace(/fill='%23FFF'/gi, "fill='%23e5e5e5'")
+        .replace(/stroke='%23000'/gi, "stroke='%232c2c2c'")
+        .replace(/stroke='%23000000'/gi, "stroke='%232c2c2c'");
+    } else {
+      modifiedSvg = modifiedSvg
+        .replace(/stroke='%23000'/gi, "stroke='%232c2c2c'")
+        .replace(/fill='%23000'/gi, "fill='%231a1a1a'")
+        .replace(/stroke='%23ececec'/gi, "stroke='%23a0a0a0'")
+        .replace(/fill='%23ececec'/gi, "fill='%23a0a0a0'");
+      if (key === 'bQ' || key === 'bR') {
+        modifiedSvg = modifiedSvg.replace(/fill-rule='evenodd'/gi, "fill='%231a1a1a' fill-rule='evenodd'");
+      } else if (key === 'bP') {
+        modifiedSvg = modifiedSvg.replace(/stroke='%232c2c2c'/gi, "fill='%231a1a1a' stroke='%232c2c2c'");
+      }
+    }
+  }
+  return modifiedSvg;
+}
+
+function applyBoardTheme(themeName) {
+  let lightColor = '#eeeed2';
+  let darkColor = '#769656';
+  
+  if (themeName === 'wood') {
+    lightColor = '#f0d9b5';
+    darkColor = '#b58863';
+  } else if (themeName === 'blue') {
+    lightColor = '#dee3e6';
+    darkColor = '#4b7399';
+  } else if (themeName === 'charcoal') {
+    lightColor = '#e0e0e0';
+    darkColor = '#4d4d4d';
+  } else if (themeName === 'cyberpunk') {
+    lightColor = '#12121c';
+    darkColor = '#08080e';
+  }
+  
+  document.documentElement.style.setProperty('--square-light', lightColor);
+  document.documentElement.style.setProperty('--square-dark', darkColor);
+  
+  if (themeName === 'cyberpunk') {
+    document.body.setAttribute('data-theme', 'cyberpunk');
+  } else {
+    document.body.removeAttribute('data-theme');
+  }
+}
+
+function applyEvalBarVisibility(visible) {
+  const container = document.getElementById('eval-bar-container');
+  const boardWrapper = document.getElementById('board-wrapper');
+  if (container && boardWrapper) {
+    if (visible) {
+      container.style.display = 'block';
+      boardWrapper.style.width = 'calc(100% - 24px)';
+    } else {
+      container.style.display = 'none';
+      boardWrapper.style.width = '100%';
+    }
+  }
+}
+
+function loadUserSettings() {
+  const storedTheme = localStorage.getItem('chess_board_theme') || 'green';
+  const storedStyle = localStorage.getItem('chess_piece_style') || 'classic';
+  const storedCoords = localStorage.getItem('chess_show_coords') !== 'false';
+  const storedHints = localStorage.getItem('chess_show_hints') !== 'false';
+  const storedEval = localStorage.getItem('chess_show_eval') !== 'false';
+  const storedSounds = localStorage.getItem('chess_show_sounds') !== 'false';
+  const storedAutoQueen = localStorage.getItem('chess_auto_queen') === 'true';
+  const storedConfirmResign = localStorage.getItem('chess_confirm_resign') !== 'false';
+  const storedAnimSpeed = parseInt(localStorage.getItem('chess_animation_speed') || '150', 10);
+  const storedHighlightMoves = localStorage.getItem('chess_highlight_moves') !== 'false';
+  const storedHighlightColor = localStorage.getItem('chess_highlight_color') || 'yellow';
+  const storedShowCaptured = localStorage.getItem('chess_show_captured') !== 'false';
+
+  boardTheme = storedTheme;
+  currentPieceStyle = storedStyle;
+  showCoords = storedCoords;
+  showHints = storedHints;
+  showEvalBar = storedEval;
+  playSounds = storedSounds;
+  autoQueen = storedAutoQueen;
+  confirmResign = storedConfirmResign;
+  animationSpeed = storedAnimSpeed;
+  highlightMoves = storedHighlightMoves;
+  highlightColor = storedHighlightColor;
+  showCaptured = storedShowCaptured;
+
+  // Sync UI elements
+  const themeInput = document.getElementById('setting-board-theme');
+  if (themeInput) themeInput.value = boardTheme;
+  const styleInput = document.getElementById('setting-piece-style');
+  if (styleInput) styleInput.value = currentPieceStyle;
+  const coordsInput = document.getElementById('setting-show-coords');
+  if (coordsInput) coordsInput.checked = showCoords;
+  const hintsInput = document.getElementById('setting-show-hints');
+  if (hintsInput) hintsInput.checked = showHints;
+  const evalInput = document.getElementById('setting-show-eval');
+  if (evalInput) evalInput.checked = showEvalBar;
+  const soundsInput = document.getElementById('setting-show-sounds');
+  if (soundsInput) soundsInput.checked = playSounds;
+  
+  // New settings UI sync
+  const autoQueenInput = document.getElementById('setting-auto-queen');
+  if (autoQueenInput) autoQueenInput.checked = autoQueen;
+  const confirmResignInput = document.getElementById('setting-confirm-resign');
+  if (confirmResignInput) confirmResignInput.checked = confirmResign;
+  const animSpeedInput = document.getElementById('setting-animation-speed');
+  if (animSpeedInput) { animSpeedInput.value = animationSpeed; }
+  const animLabel = document.getElementById('animation-speed-label');
+  if (animLabel) animLabel.textContent = animationSpeed === 0 ? 'None' : animationSpeed + 'ms';
+  const highlightMovesInput = document.getElementById('setting-highlight-moves');
+  if (highlightMovesInput) highlightMovesInput.checked = highlightMoves;
+  const showCapturedInput = document.getElementById('setting-show-captured');
+  if (showCapturedInput) showCapturedInput.checked = showCaptured;
+  const premoveInput = document.getElementById('setting-enable-premoves');
+  if (premoveInput) premoveInput.checked = true; // sync with premove-toggle
+  
+  // Sync theme preview swatches
+  document.querySelectorAll('.theme-preview-item').forEach(item => {
+    item.classList.toggle('active', item.dataset.theme === boardTheme);
+  });
+  // Sync highlight color swatches
+  document.querySelectorAll('.highlight-color-swatch').forEach(swatch => {
+    swatch.classList.toggle('active', swatch.dataset.color === highlightColor);
+  });
+
+  // Apply settings
+  applyBoardTheme(boardTheme);
+  applyEvalBarVisibility(showEvalBar);
+  
+  // Apply animation speed CSS variable
+  document.documentElement.style.setProperty('--piece-speed', animationSpeed + 'ms');
+  
+  // Apply highlight color
+  const colorMap = { yellow: 'rgba(255,255,0,0.35)', green: 'rgba(129,182,76,0.35)', blue: 'rgba(59,125,216,0.35)', orange: 'rgba(232,145,45,0.35)' };
+  document.documentElement.style.setProperty('--highlight-color', colorMap[highlightColor] || colorMap.yellow);
+  
+  updateBoard();
+  
+  if (typeof AudioController !== 'undefined') {
+    AudioController.muted = !playSounds;
+    const muteBtn = document.getElementById('mute-toggle');
+    if (muteBtn) muteBtn.innerText = AudioController.muted ? '🔇' : '🔊';
+  }
+}
+
+function saveUserSettings() {
+  const themeInput = document.getElementById('setting-board-theme');
+  if (themeInput) boardTheme = themeInput.value;
+  const styleInput = document.getElementById('setting-piece-style');
+  if (styleInput) currentPieceStyle = styleInput.value;
+  const coordsInput = document.getElementById('setting-show-coords');
+  if (coordsInput) showCoords = coordsInput.checked;
+  const hintsInput = document.getElementById('setting-show-hints');
+  if (hintsInput) showHints = hintsInput.checked;
+  const evalInput = document.getElementById('setting-show-eval');
+  if (evalInput) showEvalBar = evalInput.checked;
+  const soundsInput = document.getElementById('setting-show-sounds');
+  if (soundsInput) playSounds = soundsInput.checked;
+  
+  // New settings
+  const autoQueenInput = document.getElementById('setting-auto-queen');
+  if (autoQueenInput) autoQueen = autoQueenInput.checked;
+  const confirmResignInput = document.getElementById('setting-confirm-resign');
+  if (confirmResignInput) confirmResign = confirmResignInput.checked;
+  const animSpeedInput = document.getElementById('setting-animation-speed');
+  if (animSpeedInput) {
+    animationSpeed = parseInt(animSpeedInput.value, 10);
+    const animLabel = document.getElementById('animation-speed-label');
+    if (animLabel) animLabel.textContent = animationSpeed === 0 ? 'None' : animationSpeed + 'ms';
+    document.documentElement.style.setProperty('--piece-speed', animationSpeed + 'ms');
+  }
+  const highlightMovesInput = document.getElementById('setting-highlight-moves');
+  if (highlightMovesInput) highlightMoves = highlightMovesInput.checked;
+  const showCapturedInput = document.getElementById('setting-show-captured');
+  if (showCapturedInput) showCaptured = showCapturedInput.checked;
+  const premoveInput = document.getElementById('setting-enable-premoves');
+  if (premoveInput) {
+    const premoveToggle = document.getElementById('premove-toggle');
+    if (premoveToggle) premoveToggle.checked = premoveInput.checked;
+  }
+
+  localStorage.setItem('chess_board_theme', boardTheme);
+  localStorage.setItem('chess_piece_style', currentPieceStyle);
+  localStorage.setItem('chess_show_coords', showCoords);
+  localStorage.setItem('chess_show_hints', showHints);
+  localStorage.setItem('chess_show_eval', showEvalBar);
+  localStorage.setItem('chess_show_sounds', playSounds);
+  localStorage.setItem('chess_auto_queen', autoQueen);
+  localStorage.setItem('chess_confirm_resign', confirmResign);
+  localStorage.setItem('chess_animation_speed', animationSpeed);
+  localStorage.setItem('chess_highlight_moves', highlightMoves);
+  localStorage.setItem('chess_highlight_color', highlightColor);
+  localStorage.setItem('chess_show_captured', showCaptured);
+
+  applyBoardTheme(boardTheme);
+  applyEvalBarVisibility(showEvalBar);
+  updateBoard();
+  
+  if (typeof AudioController !== 'undefined') {
+    AudioController.muted = !playSounds;
+    const muteBtn = document.getElementById('mute-toggle');
+    if (muteBtn) muteBtn.innerText = AudioController.muted ? '🔇' : '🔊';
+  }
+}
+
+function switchSettingsTab(tabName) {
+  document.querySelectorAll('.settings-section').forEach(s => s.classList.add('hidden'));
+  document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+  const section = document.getElementById('settings-tab-' + tabName);
+  if (section) section.classList.remove('hidden');
+  const tab = document.querySelector('.settings-tab[data-tab="' + tabName + '"]');
+  if (tab) tab.classList.add('active');
+}
+
+function selectBoardTheme(themeName, el) {
+  document.querySelectorAll('.theme-preview-item').forEach(i => i.classList.remove('active'));
+  if (el) el.classList.add('active');
+  const hiddenSelect = document.getElementById('setting-board-theme');
+  if (hiddenSelect) hiddenSelect.value = themeName;
+  applyBoardTheme(themeName);
+  boardTheme = themeName;
+  saveUserSettings();
+}
+
+function selectHighlightColor(color, el) {
+  document.querySelectorAll('.highlight-color-swatch').forEach(s => s.classList.remove('active'));
+  if (el) el.classList.add('active');
+  highlightColor = color;
+  const colorMap = { yellow: 'rgba(255,255,0,0.35)', green: 'rgba(129,182,76,0.35)', blue: 'rgba(59,125,216,0.35)', orange: 'rgba(232,145,45,0.35)' };
+  document.documentElement.style.setProperty('--highlight-color', colorMap[color] || colorMap.yellow);
+  saveUserSettings();
+}
+
+function syncSidebarHeight() {
+  const gameArea = document.querySelector('.game-area');
+  const sidebar = document.querySelector('.sidebar');
+  if (gameArea && sidebar) {
+    sidebar.style.height = `${gameArea.clientHeight}px`;
+  }
+}
+window.addEventListener('resize', syncSidebarHeight);
+
+function updatePromotionDialogPieces() {
+  const color = playerColor || 'w';
+  document.querySelectorAll('.promo-piece').forEach(el => {
+    const type = el.dataset.piece;
+    const imgKey = color + type.toUpperCase();
+    const pieceImg = getPieceImage(imgKey, currentPieceStyle);
+    el.style.backgroundImage = pieceImg !== 'none' ? `url("${pieceImg}")` : 'none';
+  });
+}
+
 function showLeaderboard() {
   showMenu('menu-leaderboard');
   google.script.run.withSuccessHandler(players => {
@@ -2264,21 +2737,38 @@ document.addEventListener('DOMContentLoaded', () => {
       if (e.button === 2) {
         isRightClickDragging = true;
         rightClickStartSq = getSquareFromEvent(e);
+        currentRightClickSq = rightClickStartSq;
       } else if (e.button === 0) {
         clearSVG();
+      }
+    });
+    
+    // Ghost arrow preview while right-click dragging
+    boardEl.addEventListener('mousemove', e => {
+      if (!isRightClickDragging || !rightClickStartSq) return;
+      const hoverSq = getSquareFromEvent(e);
+      if (hoverSq && hoverSq !== currentRightClickSq) {
+        currentRightClickSq = hoverSq;
+        if (hoverSq !== rightClickStartSq) {
+          drawGhostArrow(rightClickStartSq, hoverSq);
+        } else {
+          clearGhostArrow();
+        }
       }
     });
     
     boardEl.addEventListener('mouseup', e => {
       if (e.button === 2 && isRightClickDragging) {
         isRightClickDragging = false;
+        clearGhostArrow();
         const endSq = getSquareFromEvent(e);
         if (rightClickStartSq && endSq && rightClickStartSq !== endSq) {
-          drawArrow(rightClickStartSq, endSq);
+          drawArrow(rightClickStartSq, endSq, e.shiftKey, e.altKey, e.ctrlKey || e.metaKey);
         } else if (rightClickStartSq === endSq) {
-          drawCircle(rightClickStartSq);
+          drawCircle(rightClickStartSq, e.shiftKey, e.altKey, e.ctrlKey || e.metaKey);
         }
         rightClickStartSq = null;
+        currentRightClickSq = null;
       }
     });
   } else {
@@ -2365,6 +2855,35 @@ document.addEventListener('DOMContentLoaded', () => {
   safeAddListener('btnSave', 'click', () => { const pgn = game.pgn(); google.script.run.withSuccessHandler(res => { if (res && res.success) alert('Saved!'); else alert('Cloud save failed.'); }).withFailureHandler(() => { localStorage.setItem('chess_save', pgn); alert('Saved locally.'); }).saveGame(pgn); });
   safeAddListener('btnLoad', 'click', () => { google.script.run.withSuccessHandler(res => { if (res && res.success && res.data) { game.load_pgn(res.data); updateBoard(); } else { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } } }).withFailureHandler(() => { const d = localStorage.getItem('chess_save'); if (d) { game.load_pgn(d); updateBoard(); } }).loadGame(); });
   safeAddListener('btnExport', 'click', () => { const blob = new Blob([game.pgn()], {type: "text/plain;charset=utf-8"}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'game.pgn'; a.click(); });
+
+  // Settings Change Handlers
+  ['setting-board-theme', 'setting-piece-style'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', saveUserSettings);
+  });
+  ['setting-show-coords', 'setting-show-hints', 'setting-show-eval', 'setting-show-sounds',
+   'setting-auto-queen', 'setting-confirm-resign', 'setting-highlight-moves',
+   'setting-show-captured', 'setting-enable-premoves'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', saveUserSettings);
+  });
+  const animSpeedEl = document.getElementById('setting-animation-speed');
+  if (animSpeedEl) animSpeedEl.addEventListener('input', saveUserSettings);
+
+  // Load settings on init
+  loadUserSettings();
+
+  // Promotion handlers
+  document.querySelectorAll('.promo-piece').forEach(el => {
+    el.addEventListener('click', e => {
+      const pieceType = e.currentTarget.dataset.piece;
+      if (pendingMove) {
+        attemptMove(pendingMove.from, pendingMove.to, pieceType);
+        pendingMove = null;
+      }
+      if (promoDialog) promoDialog.classList.add('hidden');
+    });
+  });
 });
 
 function getSquareFromEvent(e) {
@@ -2396,5 +2915,8 @@ window.exitAnalysisMode = exitAnalysisMode;
 window.setGameState = setGameState;
 window.showPuzzleHint = showPuzzleHint;
 window.showPuzzleSolution = showPuzzleSolution;
+window.switchSettingsTab = switchSettingsTab;
+window.selectBoardTheme = selectBoardTheme;
+window.selectHighlightColor = selectHighlightColor;
 
 </script>
