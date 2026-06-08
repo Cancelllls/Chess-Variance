@@ -48,8 +48,9 @@ body {
   padding: 20px;
   max-width: 1400px;
   width: 100%;
+  height: 90vh; /* FIX: Provide base height for child % calculation */
   justify-content: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap; /* Prevent board jumping below sidebar */
 }
 
 /* --- BOARD & EVAL BAR --- */
@@ -57,7 +58,17 @@ body {
 .board-container {
   display: flex;
   align-items: stretch;
-  gap: 2px;
+  gap: 12px;
+  height: 100%;
+}
+
+#board-wrapper {
+  position: relative;
+  width: min(90vw, 80vh, 600px);
+  height: min(90vw, 80vh, 600px);
+  background: #2a2a2a;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  flex-shrink: 0;
 }
 
 .eval-bar-container {
@@ -95,10 +106,8 @@ body {
   display: grid !important; 
   grid-template-columns: repeat(8, 1fr) !important;
   grid-template-rows: repeat(8, 1fr) !important;
-  width: 600px !important;
-  height: 600px !important;
-  max-width: 90vw !important;
-  max-height: 90vw !important;
+  width: 100% !important;
+  height: 100% !important;
   border: 4px solid #2a2a2a; 
   background: #2a2a2a;
   margin: 0 auto;
@@ -131,6 +140,35 @@ body {
 .square.light { background-color: var(--square-light); color: var(--square-dark); }
 .square.dark { background-color: var(--square-dark); color: var(--square-light); }
 .square.premove { background-color: rgba(244, 42, 50, 0.5) !important; }
+.square.highlight { background-color: rgba(255, 255, 0, 0.5) !important; } /* Soft yellow for last move */
+.square.in-check { background: radial-gradient(circle, #ff0000 0%, #ff0000 25%, transparent 70%) !important; }
+
+/* Legal Move Hints (Chess.com style) */
+.square.legal-move::before {
+  content: "";
+  position: absolute;
+  width: 25%;
+  height: 25%;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 50%;
+  z-index: 5;
+  pointer-events: none;
+}
+/* If it's a capture, use a hollow circle */
+.square.legal-move:has(.piece)::before {
+  width: 90%;
+  height: 90%;
+  background: transparent;
+  border: 5px solid rgba(0, 0, 0, 0.15);
+}
+/* Adjust for dark theme / light theme if needed */
+body.theme-dark .square.legal-move::before, body[data-theme="cyberpunk"] .square.legal-move::before {
+  background: rgba(255, 255, 255, 0.15);
+}
+body.theme-dark .square.legal-move:has(.piece)::before, body[data-theme="cyberpunk"] .square.legal-move:has(.piece)::before {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.15);
+}
 
 .piece {
   width: 100%;
@@ -140,7 +178,7 @@ body {
   background-position: center;
   cursor: grab;
   z-index: 10;
-  transition: transform 0.15s ease-out !important; /* Smooth Piece Animations */
+  transition: transform 0.15s ease-out; /* Smooth Piece Animations */
   will-change: transform;
   
   /* BROWSER FORCE-DARK FIX: Stop Chrome from inverting colors */
@@ -209,8 +247,8 @@ body[data-theme="cyberpunk"] .eval-bar-text {
   font-weight: bold;
   pointer-events: none;
 }
-.coord.rank { top: 2px; left: 2px; }
-.coord.file { bottom: 2px; right: 2px; }
+.coord-rank { top: 2px; left: 2px; }
+.coord-file { bottom: 2px; right: 2px; }
 
 /* --- SIDEBAR & PANELS --- */
 
@@ -328,15 +366,25 @@ body[data-theme="cyberpunk"] .eval-bar-text {
   border: none;
   border-bottom: 4px solid var(--accent-green-shadow);
   padding: 12px 20px;
-  border-radius: 6px;
+  border-radius: 8px;
   font-weight: 800;
-  font-size: 16px;
+  font-size: 18px;
   cursor: pointer;
-  transition: all 0.1s;
-  text-transform: uppercase;
+  transition: all 0.1s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
 }
-.btn-primary:hover { background-color: var(--accent-green-hover); transform: translateY(-1px); }
-.btn-primary:active { border-bottom-width: 0; transform: translateY(3px); }
+.btn-primary:hover { 
+  background-color: var(--accent-green-hover); 
+  transform: translateY(-2px); 
+  box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+}
+.btn-primary:active { 
+  border-bottom-width: 0; 
+  transform: translateY(2px); 
+}
 
 .controls {
   padding: 15px;
@@ -410,8 +458,13 @@ body[data-theme="cyberpunk"] .eval-bar-text {
 /* --- OVERLAYS & DIALOGS --- */
 
 #welcome-screen {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.85);
-  display: flex; justify-content: center; align-items: center; z-index: 500;
+  position: fixed; 
+  inset: 0; 
+  background: var(--bg-main); 
+  display: flex; 
+  justify-content: center; 
+  align-items: center; 
+  z-index: 2000;
 }
 .welcome-box {
   background: var(--bg-panel);
@@ -419,8 +472,23 @@ body[data-theme="cyberpunk"] .eval-bar-text {
   border-radius: 12px;
   width: 450px;
   text-align: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  border: 1px solid #333;
 }
-.welcome-box h1 { margin: 0 0 20px; color: var(--accent-green); font-size: 42px; }
+.welcome-box h1 { 
+  margin: 0 0 30px; 
+  color: var(--text-primary); 
+  font-size: 48px; 
+  font-weight: 900;
+  letter-spacing: -1px;
+}
+.welcome-box h1::after {
+  content: " PRO";
+  color: var(--accent-green);
+  font-size: 20px;
+  vertical-align: top;
+  margin-left: 5px;
+}
 
 .hidden { display: none !important; }
 
@@ -525,6 +593,62 @@ body[data-theme="cyberpunk"] .eval-bar-text {
     text-align: left;
 }
 #leaderboard-container tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+
+/* --- BOT SELECTION --- */
+.bot-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.bot-card {
+  background: rgba(0, 0, 0, 0.2);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  padding: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.2s;
+  text-align: left;
+}
+.bot-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  transform: translateY(-2px);
+}
+.bot-card.active {
+  border-color: var(--accent-green);
+  background: rgba(129, 182, 76, 0.1);
+}
+.bot-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+}
+.bot-info {
+  display: flex;
+  flex-direction: column;
+}
+.bot-name {
+  font-size: 14px;
+  font-weight: 800;
+  color: #fff;
+  margin-bottom: 2px;
+}
+.bot-elo {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  width: max-content;
+}
 
 @media (max-width: 900px) {
   .app-container { flex-direction: column; align-items: center; }
