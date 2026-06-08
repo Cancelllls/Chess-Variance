@@ -26,6 +26,8 @@ class EnginePool {
         worker.currentTask = null;
         worker.lastCp = 0;
         worker.lastMate = null;
+        worker.lastLines = [];
+        worker.lastLinesDepth = 0;
 
         worker.onmessage = (e) => {
           const line = e.data;
@@ -36,18 +38,43 @@ class EnginePool {
             if (cpMatch) { worker.lastCp = parseInt(cpMatch[1]); worker.lastMate = null; }
             const mateMatch = line.match(/score mate (-?\d+)/);
             if (mateMatch) { worker.lastMate = parseInt(mateMatch[1]); worker.lastCp = worker.lastMate > 0 ? 10000 : -10000; }
+
+            const multipvMatch = line.match(/multipv (\d+)/);
+            const multipv = multipvMatch ? parseInt(multipvMatch[1]) : 1;
+            
+            let cp = null;
+            let mate = null;
+            if (cpMatch) cp = parseInt(cpMatch[1]);
+            if (mateMatch) mate = parseInt(mateMatch[1]);
+            
+            const pvMatch = line.match(/ pv (.+)/);
+            const pv = pvMatch ? pvMatch[1].split(' ') : [];
+            
+            if (!worker.lastLines) worker.lastLines = [];
+            
+            const depthMatch = line.match(/info depth (\d+)/);
+            const depth = depthMatch ? parseInt(depthMatch[1]) : 0;
+            
+            if (depth > (worker.lastLinesDepth || 0)) {
+              worker.lastLines = [];
+              worker.lastLinesDepth = depth;
+            }
+            
+            if (depth === (worker.lastLinesDepth || 0)) {
+              worker.lastLines[multipv - 1] = { cp: cp !== null ? cp : undefined, mate: mate !== null ? mate : undefined, pv };
+            }
           }
 
           if (line.startsWith('bestmove')) {
             const move = line.split(' ')[1];
             if (worker.currentTask) {
               const { taskId, callback } = worker.currentTask;
-              if (callback) callback(worker.lastCp, worker.lastMate, taskId, move);
+              if (callback) callback(worker.lastCp, worker.lastMate, taskId, move, worker.lastLines);
               else if (this.callbacks.has(taskId)) {
-                this.callbacks.get(taskId)(worker.lastCp, worker.lastMate, taskId, move);
+                this.callbacks.get(taskId)(worker.lastCp, worker.lastMate, taskId, move, worker.lastLines);
                 this.callbacks.delete(taskId);
               } else if (this.onEvalResult) {
-                this.onEvalResult(worker.lastCp, worker.lastMate, taskId, move);
+                this.onEvalResult(worker.lastCp, worker.lastMate, taskId, move, worker.lastLines);
               }
             }
             worker.isBusy = false;
@@ -80,15 +107,21 @@ class EnginePool {
       idleWorker.currentTask = task;
       idleWorker.lastCp = 0;
       idleWorker.lastMate = null;
+      idleWorker.lastLines = [];
+      idleWorker.lastLinesDepth = 0;
       idleWorker.postMessage('stop');
+      
+      const multipv = task.multipv || 1;
+      idleWorker.postMessage('setoption name MultiPV value ' + multipv);
+      
       idleWorker.postMessage('position fen ' + task.fen);
       idleWorker.postMessage('go depth ' + task.depth);
     }
   }
 
-  evaluate(fen, depth = 10, taskId = null, callback = null) {
+  evaluate(fen, depth = 10, taskId = null, callback = null, multipv = 1) {
     this.initPool();
-    const task = { fen, depth, taskId, callback };
+    const task = { fen, depth, taskId, callback, multipv };
     if (taskId === 'live' || taskId === 'ai_move') {
       this.taskQueue = this.taskQueue.filter(t => t.taskId !== taskId);
       this.taskQueue.unshift(task);
@@ -220,6 +253,7 @@ function handlePuzzleSuccess() {
 }
 
 function loadPuzzleData(fen, solution, desc) {
+  if (typeof resetWholeGame === 'function') resetWholeGame();
   gameMode = 'puzzle';
   closeWelcomeScreen();
   puzzleSolution = solution; 

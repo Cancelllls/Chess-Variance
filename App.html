@@ -19,6 +19,7 @@ try {
 let boardFlipped = false;
 let showCoords = true;
 let showHints = false;
+let isGameOverState = false;
 
 // Multiplayer & Mode State
 let gameMode = 'local'; // 'local', 'ai', 'online', 'puzzle', 'analysis'
@@ -26,6 +27,7 @@ let playerColor = 'w';
 let playerRole = 'player'; // 'player' or 'spectator'
 let playerName = "Guest_" + Math.random().toString(36).substring(2, 10);
 let roomId = null;
+let onlineGameState = null;
 let pollInterval = null;
 let clockInterval = null;
 let aiDepth = 2;
@@ -37,12 +39,13 @@ function selectBot(depth, el) {
   el.classList.add('active');
 }
 
+
 function startAIGame(color) {
+  resetWholeGame();
   gameMode = 'ai';
   playerColor = color;
   aiDepth = selectedBotDepth;
   closeWelcomeScreen();
-  game.reset();
   boardFlipped = (color === 'b');
   whiteTime = blackTime = null; // No clock for basic AI yet
   updateBoard();
@@ -102,28 +105,99 @@ const AudioController = {
     // Hardware Haptics (Vibration API)
     if (navigator.vibrate) {
       if (type === 'move') navigator.vibrate(15);
-      else if (type === 'capture') navigator.vibrate([30, 50, 30]);
-      else if (type === 'check' || type === 'gameEnd') navigator.vibrate([100, 50, 100, 50, 200]);
+      else if (type === 'capture') navigator.vibrate([30, 40]);
+      else if (type === 'check' || type === 'gameEnd') navigator.vibrate([80, 50, 80]);
     }
 
-    // Web Audio Synthesis (Offline Bleeps)
+    // Web Audio Synthesis (High Polish Wood Click sound synthesis)
     try {
       this.init();
       if (!this.ctx) return;
       const now = this.ctx.currentTime;
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
       
-      if (type === 'move') { osc.frequency.setValueAtTime(600, now); gain.gain.setValueAtTime(0.1, now); }
-      else if (type === 'capture') { osc.frequency.setValueAtTime(400, now); gain.gain.setValueAtTime(0.2, now); }
-      else if (type === 'check') { osc.frequency.setValueAtTime(800, now); gain.gain.setValueAtTime(0.2, now); }
-      else if (type === 'gameEnd') { osc.frequency.setValueAtTime(300, now); gain.gain.setValueAtTime(0.3, now); }
-      
-      osc.start(now);
-      gain.gain.exponentialRampToValueAtTime(0.00001, now + 0.1);
-      osc.stop(now + 0.15);
+      if (type === 'move') {
+        // Wooden Chess Move tap
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(350, now);
+        osc.frequency.exponentialRampToValueAtTime(120, now + 0.08);
+        
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+        
+        osc.start(now);
+        osc.stop(now + 0.09);
+      } 
+      else if (type === 'capture') {
+        // Wooden Chess Piece Capture clack
+        const osc1 = this.ctx.createOscillator();
+        const osc2 = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        
+        osc1.connect(gain);
+        osc2.connect(gain);
+        gain.connect(this.ctx.destination);
+        
+        osc1.type = 'triangle';
+        osc1.frequency.setValueAtTime(280, now);
+        osc1.frequency.exponentialRampToValueAtTime(80, now + 0.06);
+        
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(600, now);
+        osc2.frequency.exponentialRampToValueAtTime(300, now + 0.04);
+        
+        gain.gain.setValueAtTime(0.35, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+        
+        osc1.start(now);
+        osc2.start(now);
+        osc1.stop(now + 0.09);
+        osc2.stop(now + 0.09);
+      }
+      else if (type === 'check') {
+        // Alert Chime
+        const osc1 = this.ctx.createOscillator();
+        const osc2 = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        
+        osc1.connect(gain);
+        osc2.connect(gain);
+        gain.connect(this.ctx.destination);
+        
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(780, now);
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(1040, now);
+        
+        gain.gain.setValueAtTime(0.18, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+        
+        osc1.start(now);
+        osc2.start(now);
+        osc1.stop(now + 0.4);
+        osc2.stop(now + 0.4);
+      }
+      else if (type === 'gameEnd') {
+        // Elegant organ chord chime
+        const frequencies = [261.63, 329.63, 392.00, 523.25]; // C major chord
+        const gain = this.ctx.createGain();
+        gain.connect(this.ctx.destination);
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.2);
+        
+        frequencies.forEach(f => {
+          const osc = this.ctx.createOscillator();
+          osc.connect(gain);
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(f, now);
+          osc.start(now);
+          osc.stop(now + 1.3);
+        });
+      }
     } catch(e) {}
   }
 };
@@ -201,6 +275,67 @@ function showMenu(id) {
   if (target) target.classList.remove('hidden');
 }
 
+
+function resetWholeGame() {
+  // 1. Reset JavaScript chess state
+  if (typeof game !== 'undefined' && game.reset) game.reset();
+  
+  // 2. Reset analysis/multiplayer states
+  isReviewing = false;
+  isGameOverState = false;
+  analysisHistory = [];
+  analysisIndex = -1;
+  fullGameAnalysis = [];
+  onlineGameState = null;
+  opponentName = null;
+
+  // 3. Clear board overlays and visual highlights
+  if (typeof boardEl !== 'undefined' && boardEl) {
+    boardEl.querySelectorAll('.badge').forEach(b => b.remove());
+    boardEl.querySelectorAll('.game-over-overlay').forEach(o => o.remove());
+    if (typeof clearHighlights === 'function') clearHighlights();
+  }
+  
+  pendingPremove = null;
+  selectedSquare = null;
+
+  // 4. Reset evaluation bar visual
+  const fillEl = document.getElementById('eval-bar-fill');
+  const textEl = document.getElementById('eval-bar-text');
+  if (fillEl) fillEl.style.height = '50%';
+  if (textEl) {
+    textEl.innerText = '0.0';
+    textEl.className = 'eval-bar-text bottom';
+  }
+
+  // 5. Hide analysis loading progress card and results card
+  const loadingEl = document.getElementById('analysis-loading');
+  const resultsEl = document.getElementById('analysis-results');
+  if (loadingEl) loadingEl.classList.add('hidden');
+  if (resultsEl) resultsEl.classList.add('hidden');
+
+  // 6. Reset sidebar panels
+  const reportEl = document.getElementById('analysis-report');
+  if (reportEl) reportEl.classList.add('hidden');
+  
+  const analysisControls = document.getElementById('analysis-controls');
+  if (analysisControls) analysisControls.classList.add('hidden');
+  
+  const mainControls = document.getElementById('main-controls');
+  if (mainControls) mainControls.classList.remove('hidden');
+
+  const moveList = document.getElementById('move-list');
+  if (moveList) moveList.innerHTML = '';
+  
+  // 7. Stop clocks
+  if (clockInterval) {
+    clearInterval(clockInterval);
+    clockInterval = null;
+  }
+  whiteTime = blackTime = 300000; // default 5m
+}
+window.resetWholeGame = resetWholeGame;
+
 /**
  * UI STATE MANAGEMENT
  */
@@ -209,6 +344,8 @@ function setGameState(isInGame) {
   const gameSidebar = document.getElementById('game-sidebar-content');
   const mainApp = document.getElementById('main-app');
   const waitOverlay = document.getElementById('waiting-overlay');
+  const playerTopCard = document.getElementById('player-top-card');
+  const playerBottomCard = document.getElementById('player-bottom-card');
   
   if (mainApp) {
     mainApp.style.setProperty('display', 'flex', 'important');
@@ -220,12 +357,18 @@ function setGameState(isInGame) {
   }
 
   if (isInGame) {
-    if (ws) ws.classList.add('hidden');
+    if (ws) {
+      ws.classList.add('hidden');
+      ws.style.setProperty('display', 'none', 'important');
+    }
     if (gameSidebar) {
       gameSidebar.classList.remove('hidden');
       gameSidebar.style.setProperty('display', 'flex', 'important');
     }
     if (waitOverlay) waitOverlay.classList.add('hidden');
+    
+    if (playerTopCard) playerTopCard.classList.remove('hidden');
+    if (playerBottomCard) playerBottomCard.classList.remove('hidden');
     
     // Manage puzzle controls
     const pc = document.getElementById('puzzle-controls');
@@ -245,6 +388,9 @@ function setGameState(isInGame) {
     if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
     if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
     
+    if (playerTopCard) playerTopCard.classList.add('hidden');
+    if (playerBottomCard) playerBottomCard.classList.add('hidden');
+    
     if (ws) {
       ws.classList.remove('hidden');
       ws.style.setProperty('display', 'block', 'important');
@@ -255,6 +401,7 @@ function setGameState(isInGame) {
     }
     
     if (waitOverlay) waitOverlay.classList.add('hidden');
+
     const pc = document.getElementById('puzzle-controls');
     if (pc) {
       pc.style.setProperty('display', 'none', 'important');
@@ -280,9 +427,9 @@ function openWelcomeScreen() {
 }
 
 function startLocalMultiplayer() {
+  resetWholeGame();
   gameMode = 'local';
   closeWelcomeScreen();
-  game.reset();
   boardFlipped = false;
   whiteTime = blackTime = null; // Unlimited for local
   updateBoard();
@@ -299,15 +446,23 @@ function createOnlineRoom() {
   try {
     google.script.run
       .withSuccessHandler(id => {
+        resetWholeGame();
         closeWelcomeScreen();
         roomId = id;
         gameMode = 'online';
         playerColor = 'w';
         playerRole = 'player';
         boardFlipped = false;
-        game.reset();
         const tc = (timeControl === "null") ? null : parseInt(timeControl, 10);
         whiteTime = blackTime = tc;
+        
+        onlineGameState = {
+          whitePlayer: playerName,
+          blackPlayer: null,
+          whiteTime: tc,
+          blackTime: tc
+        };
+
         updateBoard();
         const infoEl = document.getElementById('game-info-panel');
         if (infoEl) infoEl.innerText = "Room Code: " + roomId;
@@ -336,10 +491,12 @@ function joinOnlineRoom() {
            document.getElementById('online-status').innerText = "Room not found.";
            return;
         }
+        resetWholeGame();
         closeWelcomeScreen();
         roomId = id;
         gameMode = 'online';
         const state = res.data;
+        onlineGameState = state;
         playerColor = res.role === 'spectator' ? 'w' : res.role;
         playerRole = res.role;
         boardFlipped = (playerColor === 'b');
@@ -363,6 +520,7 @@ function joinOnlineRoom() {
       })
       .getGameState(id, playerName); 
   } catch(e) {
+
     document.getElementById('online-status').innerText = "Error: Network error detected.";
   }
 }
@@ -388,6 +546,7 @@ function startPolling() {
         setConnectionStatus('green');
 
         const state = res.data;
+        onlineGameState = state;
         isGamePaused = !!state.isPaused;
         
         // --- OPPONENT OFFLINE BANNER ---
@@ -516,6 +675,7 @@ function startPolling() {
 }
 
 function handleRemoteGameOver(gameOver) {
+  isGameOverState = true;
   if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
   if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
   AudioController.play('gameEnd');
@@ -564,6 +724,8 @@ function checkPremove() {
              errorCallback(err);
           })
           .makeMove(roomId, game.fen(), game.pgn(), game.game_over(), game.history().length, playerColor);
+      } else if (gameMode === 'ai' && !game.game_over()) {
+        setTimeout(makeAIMove, 250);
       }
       
       updateBoard();
@@ -608,19 +770,6 @@ function initBoard() {
              secretThemeClicks = 0;
            }
         });
-      }
-      
-      if (c === 0) {
-        const rank = document.createElement('div');
-        rank.className = 'coord coord-rank';
-        rank.innerText = 8 - r;
-        square.appendChild(rank);
-      }
-      if (r === 7) {
-        const file = document.createElement('div');
-        file.className = 'coord coord-file';
-        file.innerText = String.fromCharCode(97 + c);
-        square.appendChild(file);
       }
       
       square.addEventListener('mousedown', handleSquareClick);
@@ -669,8 +818,8 @@ function updateMoveList() {
     const wActive = (isReviewMode && analysisIndex === wIdx) ? 'active' : '';
     const bActive = (isReviewMode && analysisIndex === bIdx) ? 'active' : '';
 
-    html += `<div class="move-row" style="display:grid; grid-template-columns:35px 1fr 1fr; padding:4px 0; border-bottom:1px solid #333;">
-               <span style="color:#666; font-weight:bold; display:flex; align-items:center; justify-content:center;">${Math.floor(i/2)+1}</span>
+    html += `<div class="move-row">
+               <span class="move-num">${Math.floor(i/2)+1}</span>
                <span class="move-val ${wActive}" onclick="goToAnalysisStep(${wIdx})">
                  <span>${hist[wIdx]}</span>
                  ${wMarker}
@@ -693,12 +842,107 @@ function updateMoveList() {
   }
 }
 
+let opponentName = null;
+
+function updatePlayerInfoCards(onlineState = null) {
+  const nameTopEl = document.getElementById('name-top');
+  const ratingTopEl = document.getElementById('rating-top');
+  const nameBottomEl = document.getElementById('name-bottom');
+  const ratingBottomEl = document.getElementById('rating-bottom');
+  const avatarTopEl = document.getElementById('avatar-top');
+  const avatarBottomEl = document.getElementById('avatar-bottom');
+  
+  if (!nameTopEl || !nameBottomEl) return;
+  
+  // Default values
+  let nameW = "White";
+  let ratingW = "";
+  let avatarW = "👤";
+  let nameB = "Black";
+  let ratingB = "";
+  let avatarB = "👤";
+  
+  if (gameMode === 'ai') {
+    const botNames = ["Jimmy", "Martin", "Sarah", "Nelson", "Marcus", "Antonio", "Alpha", "Magnus"];
+    const botElos = ["400", "800", "1000", "1300", "1600", "1800", "2200", "3200"];
+    const botAvatars = ["👦", "👨", "👩", "🧔", "🦊", "🦁", "🤖", "👑"];
+    const botIdx = Math.max(0, Math.min(7, aiDepth - 1));
+    
+    const botName = botNames[botIdx];
+    const botElo = botElos[botIdx];
+    const botAv = botAvatars[botIdx];
+    
+    if (playerColor === 'w') {
+      nameW = playerName || "You";
+      ratingW = "1500";
+      avatarW = "👤";
+      nameB = botName;
+      ratingB = botElo;
+      avatarB = botAv;
+    } else {
+      nameW = botName;
+      ratingW = botElo;
+      avatarW = botAv;
+      nameB = playerName || "You";
+      ratingB = "1500";
+      avatarB = "👤";
+    }
+  } else if (gameMode === 'local') {
+    nameW = "White Player";
+    nameB = "Black Player";
+  } else if (gameMode === 'online') {
+    if (onlineState) {
+      nameW = onlineState.whitePlayer || "White";
+      nameB = onlineState.blackPlayer || "Waiting...";
+      
+      // Update opponentName for local tracking
+      if (playerColor === 'w') {
+        opponentName = onlineState.blackPlayer || "Waiting...";
+      } else {
+        opponentName = onlineState.whitePlayer || "White";
+      }
+    } else {
+      nameW = playerColor === 'w' ? (playerName || "You") : (opponentName || "Opponent");
+      nameB = playerColor === 'b' ? (playerName || "You") : (opponentName || "Opponent");
+    }
+  } else if (gameMode === 'puzzle') {
+    nameW = "Puzzle Opponent";
+    nameB = playerName || "You";
+  }
+  
+  // Update DOM. If boardFlipped is true, Black is at the bottom (viewer's side), White is at the top.
+  // If boardFlipped is false, White is at the bottom, Black is at the top.
+  if (boardFlipped) {
+    nameTopEl.innerText = nameW;
+    ratingTopEl.innerText = ratingW ? `(${ratingW})` : "";
+    avatarTopEl.innerText = avatarW;
+    
+    nameBottomEl.innerText = nameB;
+    ratingBottomEl.innerText = ratingB ? `(${ratingB})` : "";
+    avatarBottomEl.innerText = avatarB;
+  } else {
+    nameTopEl.innerText = nameB;
+    ratingTopEl.innerText = ratingB ? `(${ratingB})` : "";
+    avatarTopEl.innerText = avatarB;
+    
+    nameBottomEl.innerText = nameW;
+    ratingBottomEl.innerText = ratingW ? `(${ratingW})` : "";
+    avatarBottomEl.innerText = avatarW;
+  }
+}
+
 function updateBoard() {
   if (!boardEl) {
     boardEl = document.getElementById('board');
     if (!boardEl) return;
   }
   if (!visualGame) return; 
+
+  // Sync player profiles on cards
+  updatePlayerInfoCards(onlineGameState);
+
+  // Clear existing coordinate elements from the board
+  boardEl.querySelectorAll('.coord').forEach(el => el.remove());
   
   // PRE-ANIMATION: Capture current positions of all pieces
   const piecePositions = new Map();
@@ -712,6 +956,7 @@ function updateBoard() {
   if (!squares || squares.length === 0) return;
 
   boardEl.style.transform = boardFlipped ? 'rotate(180deg)' : '';
+  boardEl.classList.toggle('flipped', boardFlipped);
   
   // Highlighting the last move
   const history = visualGame.history({ verbose: true });
@@ -756,7 +1001,7 @@ function updateBoard() {
       existingPiece.remove();
     }
 
-    sq.classList.remove('highlight', 'legal-move', 'in-check', 'premove');
+    sq.classList.remove('highlight', 'legal-move', 'in-check', 'premove', 'selected');
     
     // Highlight last move squares
     if (lastMove && (sq.dataset.square === lastMove.from || sq.dataset.square === lastMove.to)) {
@@ -766,7 +1011,25 @@ function updateBoard() {
     if (pendingPremove && (sq.dataset.square === pendingPremove.from || sq.dataset.square === pendingPremove.to)) {
       sq.classList.add('premove');
     }
+
+    // Dynamically render coordinates on visual edges (left column and bottom row)
+    const visualRow = boardFlipped ? (7 - r) : r;
+    const visualCol = boardFlipped ? (7 - c) : c;
+    
+    if (visualCol === 0) {
+      const rank = document.createElement('div');
+      rank.className = 'coord coord-rank';
+      rank.innerText = 8 - visualRow;
+      sq.appendChild(rank);
+    }
+    if (visualRow === 7) {
+      const file = document.createElement('div');
+      file.className = 'coord coord-file';
+      file.innerText = String.fromCharCode(97 + visualCol);
+      sq.appendChild(file);
+    }
   });
+
 
   // POST-ANIMATION: Apply FLIP
   if (lastMove) {
@@ -819,14 +1082,37 @@ function updateBoard() {
   updateCapturedPieces(b);
 
   const isOver = game.game_over();
+  if (isOver && !isGameOverState) {
+    isGameOverState = true;
+    let result = "1/2-1/2";
+    let reason = "Draw";
+    if (game.in_checkmate()) {
+      if (game.turn() === 'w') {
+        result = "0-1";
+        reason = "Black wins by checkmate";
+      } else {
+        result = "1-0";
+        reason = "White wins by checkmate";
+      }
+    } else if (game.in_stalemate()) {
+      reason = "Stalemate";
+    } else if (game.in_threefold_repetition()) {
+      reason = "Threefold Repetition";
+    } else if (game.insufficient_material()) {
+      reason = "Insufficient Material";
+    }
+    
+    handleRemoteGameOver({ result, reason });
+  }
+
   const btnReview = document.getElementById('btnReview');
-  if (btnReview) btnReview.classList.toggle('hidden', !isOver);
+  if (btnReview) btnReview.classList.toggle('hidden', !isGameOverState);
   
   const controls = ['btnUndo', 'btnDraw', 'btnResign'];
   controls.forEach(id => {
     const el = document.getElementById(id);
     if(el) {
-      if (isOver || playerRole === 'spectator') el.classList.add('hidden');
+      if (isGameOverState || playerRole === 'spectator') el.classList.add('hidden');
       else {
         el.classList.remove('hidden');
         if (id === 'btnUndo') { el.disabled = game.history().length === 0; el.style.opacity = el.disabled ? '0.5' : '1'; }
@@ -895,11 +1181,11 @@ function updateCapturedPieces(boardArray) {
   };
 
   if (boardFlipped) {
-    topEl.innerHTML = renderCap(capByBlack, blackMat - whiteMat);
-    botEl.innerHTML = renderCap(capByWhite, whiteMat - blackMat);
-  } else {
     topEl.innerHTML = renderCap(capByWhite, whiteMat - blackMat);
     botEl.innerHTML = renderCap(capByBlack, blackMat - whiteMat);
+  } else {
+    topEl.innerHTML = renderCap(capByBlack, blackMat - whiteMat);
+    botEl.innerHTML = renderCap(capByWhite, whiteMat - blackMat);
   }
 }
 
@@ -909,6 +1195,7 @@ function handleSquareClick(e) {
   e.stopPropagation();
   clearSVG();
   
+  if (isGameOverState) return;
   if (gameMode === 'analysis' || playerRole === 'spectator') return;
 
   if (isReviewing) {
@@ -920,7 +1207,7 @@ function handleSquareClick(e) {
   
   const sq = e.currentTarget.dataset.square;
   const p = game.get(sq);
-  const isOpponentTurn = (gameMode === 'online' && game.turn() !== playerColor);
+  const isOpponentTurn = ((gameMode === 'online' || gameMode === 'ai') && game.turn() !== playerColor);
 
   // Clear premove if clicking any square while one exists
   if (pendingPremove) {
@@ -964,6 +1251,7 @@ function handleSquareClick(e) {
 }
 
 function handleDragStart(e) {
+  if (isGameOverState) { e.preventDefault(); return; }
   if (gameMode === 'analysis' || playerRole === 'spectator') { e.preventDefault(); return; }
   
   if (isReviewing) {
@@ -979,7 +1267,7 @@ function handleDragStart(e) {
 
   const sq = e.target.dataset.square;
   const p = game.get(sq);
-  const isOpponentTurn = (gameMode === 'online' && game.turn() !== playerColor);
+  const isOpponentTurn = ((gameMode === 'online' || gameMode === 'ai') && game.turn() !== playerColor);
 
   if (isOpponentTurn) {
     if (!premoveToggle || !premoveToggle.checked || (p && p.color !== playerColor)) {
@@ -996,7 +1284,8 @@ function handleDragStart(e) {
   
   selectedSquare = sq;
   e.dataTransfer.setData('text/plain', selectedSquare);
-  // FIX: Show legal move hints when starting a drag
+  // FIX: Show legal move hints and highlight square when starting a drag
+  highlightSquare(sq);
   highlightLegalMoves(sq);
   // Clear SVG immediately on drag to prevent visual clutter
   clearSVG();
@@ -1014,7 +1303,7 @@ function handleDrop(e) {
   if (target.classList.contains('piece')) target = target.parentElement;
   const to = target.dataset.square;
   
-  const isOpponentTurn = (gameMode === 'online' && game.turn() !== playerColor);
+  const isOpponentTurn = ((gameMode === 'online' || gameMode === 'ai') && game.turn() !== playerColor);
   if (isOpponentTurn && premoveToggle.checked) {
     pendingPremove = { from, to };
     updateBoard();
@@ -1027,6 +1316,7 @@ function handleDrop(e) {
 }
 
 function attemptMove(from, to, promo = null) {
+  if (isGameOverState) return;
   document.getElementById('takeback-toast').classList.add('hidden');
   const drToast = document.getElementById('draw-toast');
   if (!drToast.classList.contains('hidden')) {
@@ -1185,8 +1475,8 @@ function drawArrow(from, to) {
   }
 }
 function clearSVG() { svgLayer.innerHTML = ''; }
-function highlightSquare(sq) { const el = boardEl.querySelector(`[data-square="${sq}"]`); if (el) el.classList.add('highlight'); }
-function clearHighlights() { boardEl.querySelectorAll('.square').forEach(sq => sq.classList.remove('highlight', 'legal-move')); }
+function highlightSquare(sq) { const el = boardEl.querySelector(`[data-square="${sq}"]`); if (el) el.classList.add('selected'); }
+function clearHighlights() { boardEl.querySelectorAll('.square').forEach(sq => sq.classList.remove('selected', 'legal-move')); }
 function highlightLegalMoves(sq) { game.moves({ square: sq, verbose: true }).forEach(m => { const el = boardEl.querySelector(`[data-square="${m.to}"]`); if (el) el.classList.add('legal-move'); }); }
 function showPromotionDialog() { promoDialog.classList.remove('hidden'); }
 function makeAIMove() { 
@@ -1224,25 +1514,170 @@ function showLeaderboard() {
   }).getLeaderboard();
 }
 
-function triggerEvaluation(depth = 10) {
+function triggerEvaluation(depth = 16) {
   if (gameMode === 'online') return;
   if (evalDebounceTimeout) clearTimeout(evalDebounceTimeout);
   evalDebounceTimeout = setTimeout(() => {
-    enginePool.evaluate(game.fen(), depth, 'live', (cp, mate) => {
+    const depthSelectEl = document.getElementById('eval-depth-select');
+    const targetDepth = depthSelectEl ? parseInt(depthSelectEl.value, 10) : depth;
+    
+    // Show thinking indicator
+    updateEngineStatus("thinking", 1, targetDepth);
+    
+    const fen = (visualGame || game).fen();
+    enginePool.evaluate(fen, targetDepth, 'live', (cp, mate, taskId, bestMove, lastLines) => {
+      // Evaluation complete callback
       updateEvalBar(cp, mate);
+      updateEngineUI(cp, mate, bestMove, lastLines, targetDepth);
     });
   }, 250);
 }
 let evalDebounceTimeout = null;
+
 function updateEvalBar(cp, mate) {
   const fillEl = document.getElementById('eval-bar-fill'); const textEl = document.getElementById('eval-bar-text');
   if (!fillEl || !textEl) return;
-  let absCp = (game.turn() === 'b' ? -cp : cp); let absMate = (mate !== null && game.turn() === 'b' ? -mate : mate);
+  const currentFlipped = (typeof boardFlipped !== 'undefined' && boardFlipped);
+  const activeGame = visualGame || game;
+  let absCp = (activeGame.turn() === 'b' ? -cp : cp); 
+  let absMate = (mate !== null && activeGame.turn() === 'b' ? -mate : mate);
   let percentage = absMate !== null ? (absMate > 0 ? 100 : 0) : 100 / (1 + Math.exp(-absCp / 200));
-  fillEl.style.height = (boardFlipped ? 100 - percentage : percentage) + '%';
-  textEl.innerText = absMate !== null ? 'M' + Math.abs(absMate) : (Math.abs(absCp) / 100).toFixed(1);
-  textEl.className = 'eval-bar-text ' + (percentage > 50 ? (boardFlipped ? 'top' : 'bottom') : (boardFlipped ? 'bottom' : 'top'));
+  fillEl.style.height = (currentFlipped ? 100 - percentage : percentage) + '%';
+  
+  if (absMate !== null) {
+    textEl.innerText = absMate > 0 ? 'M' + absMate : '-M' + Math.abs(absMate);
+  } else {
+    const scoreVal = absCp / 100;
+    textEl.innerText = scoreVal > 0 ? '+' + scoreVal.toFixed(1) : (scoreVal < 0 ? scoreVal.toFixed(1) : '0.0');
+  }
+  textEl.className = 'eval-bar-text ' + (percentage > 50 ? (currentFlipped ? 'top' : 'bottom') : (currentFlipped ? 'bottom' : 'top'));
 }
+
+// Translate raw UCI (e.g. e2e4) into Chess.js SAN (e.g. e4)
+function uciToSan(gameInstance, uci) {
+  if (!uci) return '--';
+  const temp = new Chess(gameInstance.fen());
+  const moves = temp.moves({ verbose: true });
+  const from = uci.substring(0, 2);
+  const to = uci.substring(2, 4);
+  const promotion = uci.length > 4 ? uci.charAt(4) : null;
+  const matched = moves.find(m => m.from === from && m.to === to && (!promotion || m.promotion === promotion));
+  return matched ? matched.san : uci;
+}
+
+// Convert Stockfish PV move array to formatted SAN string
+function formatPvLine(fen, pvArray) {
+  if (!pvArray || pvArray.length === 0) return '';
+  const temp = new Chess(fen);
+  const formatted = [];
+  let moveNum = Math.floor(temp.history().length / 2) + 1;
+  
+  for (let uci of pvArray) {
+    const from = uci.substring(0, 2);
+    const to = uci.substring(2, 4);
+    const promo = uci.length > 4 ? uci.charAt(4) : null;
+    
+    const moves = temp.moves({ verbose: true });
+    const match = moves.find(m => m.from === from && m.to === to && (!promo || m.promotion === promo));
+    if (match) {
+      const prefix = (temp.turn() === 'w') ? `${moveNum}. ` : `${moveNum}... `;
+      formatted.push(prefix + match.san);
+      temp.move(match);
+      if (temp.turn() === 'w') moveNum++;
+    } else {
+      formatted.push(uci);
+      break;
+    }
+  }
+  return formatted.join(' ');
+}
+
+// Update UI elements for current thinking status
+function updateEngineStatus(status, currentDepth, targetDepth, cp = null, mate = null, pvMove = null, pvArray = null) {
+  const spinnerEl = document.getElementById('engine-spinner');
+  const depthTextEl = document.getElementById('eval-depth-current');
+  const scoreEl = document.getElementById('engine-eval-score');
+  const bestMoveEl = document.getElementById('engine-best-move');
+  const playedMoveEl = document.getElementById('engine-played-move');
+  const playedRow = document.getElementById('engine-played-row');
+  const pvEl = document.getElementById('engine-pv-line');
+  
+  if (spinnerEl) {
+    spinnerEl.style.display = (status === "thinking") ? "inline-block" : "none";
+  }
+  
+  if (depthTextEl) {
+    depthTextEl.innerText = `${currentDepth}/${targetDepth}`;
+  }
+  
+  const activeGame = visualGame || game;
+  
+  if (scoreEl && (cp !== null || mate !== null)) {
+    const isBlackTurn = activeGame.turn() === 'b';
+    let absCp = isBlackTurn ? -cp : cp;
+    let absMate = (mate !== null && isBlackTurn) ? -mate : mate;
+    if (absMate !== null) {
+      scoreEl.innerText = absMate > 0 ? 'M' + absMate : '-M' + Math.abs(absMate);
+    } else {
+      const scoreVal = absCp / 100;
+      scoreEl.innerText = scoreVal > 0 ? '+' + scoreVal.toFixed(1) : (scoreVal < 0 ? scoreVal.toFixed(1) : '0.0');
+    }
+  }
+  
+  if (bestMoveEl && pvMove) {
+    const sanMove = uciToSan(activeGame, pvMove);
+    bestMoveEl.innerText = sanMove;
+  }
+  
+  if (playedRow && playedMoveEl) {
+    if (gameMode === 'analysis' && fullGameAnalysis[analysisIndex]) {
+      playedRow.style.display = 'flex';
+      const item = fullGameAnalysis[analysisIndex];
+      playedMoveEl.innerText = `${item.move.san} (${item.classification})`;
+    } else {
+      playedRow.style.display = 'none';
+    }
+  }
+
+  if (pvEl && pvArray && pvArray.length > 0) {
+    const formattedLine = formatPvLine(activeGame.fen(), pvArray.slice(0, 5));
+    pvEl.innerText = formattedLine || '--';
+  }
+}
+
+// Update UI elements when evaluation is completed
+function updateEngineUI(cp, mate, bestMove, lastLines, targetDepth) {
+  updateEngineStatus("complete", targetDepth, targetDepth);
+  
+  const scoreEl = document.getElementById('engine-eval-score');
+  const bestMoveEl = document.getElementById('engine-best-move');
+  const pvEl = document.getElementById('engine-pv-line');
+  
+  const activeGame = visualGame || game;
+  const isBlackTurn = activeGame.turn() === 'b';
+  let absCp = isBlackTurn ? -cp : cp;
+  let absMate = (mate !== null && isBlackTurn) ? -mate : mate;
+  
+  if (scoreEl) {
+    if (absMate !== null) {
+      scoreEl.innerText = absMate > 0 ? 'M' + absMate : '-M' + Math.abs(absMate);
+    } else {
+      const scoreVal = absCp / 100;
+      scoreEl.innerText = scoreVal > 0 ? '+' + scoreVal.toFixed(1) : (scoreVal < 0 ? scoreVal.toFixed(1) : '0.0');
+    }
+  }
+  
+  if (bestMoveEl && bestMove) {
+    const sanMove = uciToSan(activeGame, bestMove);
+    bestMoveEl.innerText = sanMove;
+  }
+  
+  if (pvEl && lastLines && lastLines.length > 0 && lastLines[0] && lastLines[0].pv) {
+    const formattedLine = formatPvLine(activeGame.fen(), lastLines[0].pv.slice(0, 6));
+    pvEl.innerText = formattedLine || '--';
+  }
+}
+
 
 let analysisHistory = []; let analysisIndex = -1; let fullGameAnalysis = [];
 async function startAnalysisMode() {
@@ -1251,6 +1686,17 @@ async function startAnalysisMode() {
   document.getElementById('game-info-panel').innerText = "Analyzing Game..."; document.getElementById('analysis-report').classList.remove('hidden');
   document.getElementById('white-elo').innerText = "---"; document.getElementById('black-elo').innerText = "---";
   
+  const loadingEl = document.getElementById('analysis-loading');
+  const resultsEl = document.getElementById('analysis-results');
+  if (loadingEl) {
+    loadingEl.classList.remove('hidden');
+    const bar = document.getElementById('analysis-progress-bar');
+    const txt = document.getElementById('analysis-progress-text');
+    if (bar) bar.style.width = '0%';
+    if (txt) txt.innerText = `0% completed (0 of ${analysisHistory.length + 1} moves)`;
+  }
+  if (resultsEl) resultsEl.classList.add('hidden');
+
   // Remove game over overlay if present
   if (boardEl) {
     const overlay = boardEl.querySelector('.game-over-overlay');
@@ -1259,78 +1705,415 @@ async function startAnalysisMode() {
 
   const startTime = performance.now(); await runFullGameAnalysis(); const endTime = performance.now();
   document.getElementById('execution-time').innerText = Math.round(endTime - startTime); document.getElementById('thread-count').innerText = enginePool.poolSize;
+  
+  if (loadingEl) loadingEl.classList.add('hidden');
+  if (resultsEl) resultsEl.classList.remove('hidden');
+  
   updateBoard(); triggerEvaluation(16);
 }
+
+// --- CHESSKIT ACCURACY & CLASSIFICATION HELPERS ---
+function getPositionWinPercentage(position, fen = null) {
+  const turn = (fen && fen.split(" ")[1]) || "w";
+  if (position.lines && position.lines.length > 0) {
+    return getLineWinPercentage(position.lines[0], turn);
+  }
+  return getLineWinPercentage(position, turn);
+}
+
+function getLineWinPercentage(line, turn = "w") {
+  if (line.cp !== undefined && line.cp !== null) {
+    let cpWhite = turn === 'b' ? -line.cp : line.cp;
+    return getWinPercentageFromCp(cpWhite);
+  }
+  if (line.mate !== undefined && line.mate !== null) {
+    let mateWhite = turn === 'b' ? -line.mate : line.mate;
+    return getWinPercentageFromMate(mateWhite);
+  }
+  return 50;
+}
+
+function getWinPercentageFromMate(mate) {
+  return mate > 0 ? 100 : 0;
+}
+
+function getWinPercentageFromCp(cp) {
+  const cpCeiled = Math.min(1000, Math.max(-1000, cp));
+  const MULTIPLIER = -0.00368208;
+  const winChances = 2 / (1 + Math.exp(MULTIPLIER * cpCeiled)) - 1;
+  return 50 + 50 * winChances;
+}
+
+
+
+function uciMoveParams(uciMove) {
+  return {
+    from: uciMove.slice(0, 2),
+    to: uciMove.slice(2, 4),
+    promotion: uciMove.slice(4, 5) || undefined,
+  };
+}
+
+function getPieceValue(piece) {
+  switch (piece) {
+    case "p": return 1;
+    case "n": return 3;
+    case "b": return 3;
+    case "r": return 5;
+    case "q": return 9;
+    default: return 0;
+  }
+}
+
+function getMaterialDifference(fen) {
+  const game = new Chess(fen);
+  const board = game.board();
+  let diff = 0;
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const square = board[r][c];
+      if (square) {
+        const val = getPieceValue(square.type);
+        if (square.color === "w") {
+          diff += val;
+        } else {
+          diff -= val;
+        }
+      }
+    }
+  }
+  return diff;
+}
+
+function getIsPieceSacrifice(fen, playedMove, bestLinePvToPlay) {
+  if (!bestLinePvToPlay || !bestLinePvToPlay.length) return false;
+
+  const game = new Chess(fen);
+  const whiteToPlay = game.turn() === "w";
+  const startingMaterialDifference = getMaterialDifference(fen);
+
+  let moves = [playedMove, ...bestLinePvToPlay];
+  if (moves.length % 2 === 1) {
+    moves = moves.slice(0, -1);
+  }
+  let nonCapturingMovesTemp = 1;
+
+  const capturedPieces = { w: [], b: [] };
+  for (const move of moves) {
+    try {
+      const fullMove = game.move(uciMoveParams(move));
+      if (fullMove.captured) {
+        capturedPieces[fullMove.color].push(fullMove.captured);
+        nonCapturingMovesTemp = 1;
+      } else {
+        nonCapturingMovesTemp--;
+        if (nonCapturingMovesTemp < 0) break;
+      }
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  }
+
+  for (const p of capturedPieces["w"].slice(0)) {
+    const idx = capturedPieces["b"].indexOf(p);
+    if (idx !== -1) {
+      capturedPieces["b"].splice(idx, 1);
+      capturedPieces["w"].splice(capturedPieces["w"].indexOf(p), 1);
+    }
+  }
+
+  if (
+    Math.abs(capturedPieces["w"].length - capturedPieces["b"].length) <= 1 &&
+    capturedPieces["w"].concat(capturedPieces["b"]).every((p) => p === "p")
+  ) {
+    return false;
+  }
+
+  const endingMaterialDifference = getMaterialDifference(game.fen());
+  const materialDiff = endingMaterialDifference - startingMaterialDifference;
+  const materialDiffPlayerRelative = whiteToPlay ? materialDiff : -materialDiff;
+
+  return materialDiffPlayerRelative < 0;
+}
+
+function isSimplePieceRecapture(fen, uciMoves) {
+  const game = new Chess(fen);
+  const moves = uciMoves.map((uciMove) => uciMoveParams(uciMove));
+
+  if (moves[0].to !== moves[1].to) return false;
+
+  const piece = game.get(moves[0].to);
+  if (piece) return true;
+
+  return false;
+}
+
+function isLosingOrAlternateCompletelyWinning(positionWinPercentage, lastPositionAlternativeLineWinPercentage, isWhiteMove) {
+  const isLosing = isWhiteMove ? positionWinPercentage < 50 : positionWinPercentage > 50;
+  const isAlternateCompletelyWinning = isWhiteMove
+    ? lastPositionAlternativeLineWinPercentage > 97
+    : lastPositionAlternativeLineWinPercentage < 3;
+
+  return isLosing || isAlternateCompletelyWinning;
+}
+
+function getMovesAccuracy(movesWinPercentage) {
+  const accuracies = [];
+  for (let i = 1; i < movesWinPercentage.length; i++) {
+    const winPercent = movesWinPercentage[i];
+    const lastWinPercent = movesWinPercentage[i - 1];
+    const isWhiteMove = (i - 1) % 2 === 0;
+    const winDiff = isWhiteMove
+      ? Math.max(0, lastWinPercent - winPercent)
+      : Math.max(0, winPercent - lastWinPercent);
+
+    const rawAccuracy =
+      103.1668100711649 * Math.exp(-0.04354415386753951 * winDiff) -
+      3.166924740191411;
+
+    accuracies.push(Math.min(100, Math.max(0, rawAccuracy + 1)));
+  }
+  return accuracies;
+}
+
+function getAccuracyWeights(movesWinPercentage) {
+  const n = movesWinPercentage.length;
+  const windowSize = Math.min(8, Math.max(2, Math.ceil(n / 10)));
+  const halfWindowSize = Math.round(windowSize / 2);
+  const weights = [];
+  
+  for (let i = 1; i < n; i++) {
+    let startIdx = i - halfWindowSize;
+    let endIdx = i + halfWindowSize;
+    let window = [];
+    if (startIdx < 0) {
+      window = movesWinPercentage.slice(0, windowSize);
+    } else if (endIdx > n) {
+      window = movesWinPercentage.slice(-windowSize);
+    } else {
+      window = movesWinPercentage.slice(startIdx, endIdx);
+    }
+    
+    const std = getStandardDeviation(window);
+    weights.push(Math.min(12, Math.max(0.5, std)));
+  }
+  return weights;
+}
+
+function getStandardDeviation(array) {
+  const n = array.length;
+  if (n === 0) return 0;
+  const mean = array.reduce((a, b) => a + b) / n;
+  return Math.sqrt(
+    array.map((x) => Math.pow(x - mean, 2)).reduce((a, b) => a + b) / n
+  );
+}
+
+function getWeightedMean(array, weights) {
+  let weightedSum = 0;
+  let weightSum = 0;
+  for (let i = 0; i < array.length; i++) {
+    weightedSum += array[i] * weights[i];
+    weightSum += weights[i];
+  }
+  return weightSum > 0 ? weightedSum / weightSum : 0;
+}
+
+function getHarmonicMean(array) {
+  if (array.length === 0) return 0;
+  const sum = array.reduce((acc, curr) => acc + 1 / curr, 0);
+  return sum > 0 ? array.length / sum : 0;
+}
+
+function getPlayerAccuracy(movesAccuracy, weights, player) {
+  const remainder = player === "white" ? 0 : 1;
+  const playerAccuracies = movesAccuracy.filter((_, index) => index % 2 === remainder);
+  const playerWeights = weights.filter((_, index) => index % 2 === remainder);
+  
+  if (playerAccuracies.length === 0) return 100;
+  
+  const weightedMean = getWeightedMean(playerAccuracies, playerWeights);
+  const harmonicMean = getHarmonicMean(
+    playerAccuracies.map((a) => Math.max(a, 10))
+  );
+
+  return (weightedMean + harmonicMean) / 2;
+}
+
 async function runFullGameAnalysis() {
   fullGameAnalysis = []; 
   const history = game.history({ verbose: true }); 
   const tempGame = new Chess(); 
   const fens = [tempGame.fen()];
+  const uciMoves = [];
   
   for (let m of history) { 
+    const fromStr = m.from;
+    const toStr = m.to;
+    const promotionStr = m.promotion || "";
+    uciMoves.push(fromStr + toStr + promotionStr);
     tempGame.move(m); 
     fens.push(tempGame.fen()); 
   }
   
-  const evalPromises = fens.map((f, i) => new Promise(resolve => {
-      const timeout = setTimeout(() => resolve({ cp: 0, mate: null }), 120000); // 120s fallback to allow queue processing
-      enginePool.evaluate(f, 12, `batch_${i}`, (cp, mate) => {
-        clearTimeout(timeout);
-        resolve({ cp, mate });
-      });
-  }));
+  let resolvedCount = 0;
+  const totalCount = fens.length;
+  const updateProgress = () => {
+    resolvedCount++;
+    const percent = Math.round((resolvedCount / totalCount) * 100);
+    const bar = document.getElementById('analysis-progress-bar');
+    const txt = document.getElementById('analysis-progress-text');
+    if (bar) bar.style.width = percent + '%';
+    if (txt) txt.innerText = `${percent}% completed (${resolvedCount} of ${totalCount} moves)`;
+  };
   
-  const evals = await Promise.all(evalPromises);
-  let wCPLs = []; 
-  let bCPLs = []; 
-  let tallies = { brilliant: 0, great: 0, best: 0, excellent: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0, book: 0 };
+  const evals = [];
+  for (let i = 0; i < fens.length; i++) {
+    const f = fens[i];
+    const val = await new Promise(resolve => {
+      const timeout = setTimeout(() => {
+        updateProgress();
+        resolve({ cp: 0, mate: null, lines: [], bestMove: null });
+      }, 120000);
+      enginePool.evaluate(f, 12, `batch_${i}`, (cp, mate, taskId, move, lastLines) => {
+        clearTimeout(timeout);
+        updateProgress();
+        resolve({ cp, mate, lines: lastLines || [], bestMove: move });
+      }, 2); // Request MultiPV = 2
+    });
+    evals.push(val);
+  }
+  const positionsWinPercentage = evals.map((val, idx) => getPositionWinPercentage(val, fens[idx]));
+  const movesAccuracy = getMovesAccuracy(positionsWinPercentage);
+  const weights = getAccuracyWeights(positionsWinPercentage);
+  
+  const accW = Math.round(getPlayerAccuracy(movesAccuracy, weights, "white"));
+  const accB = Math.round(getPlayerAccuracy(movesAccuracy, weights, "black"));
+  
+  let tallies = { brilliant: 0, great: 0, best: 0, excellent: 0, good: 0, book: 0, forced: 0, inaccuracy: 0, mistake: 0, blunder: 0 };
   
   for (let i = 0; i < history.length; i++) {
-    const prev = evals[i]; 
-    const curr = evals[i+1]; 
-    const turn = i % 2 === 0 ? 'w' : 'b';
+    const prevPosition = evals[i];
+    const rawPosition = evals[i+1];
+    const playedMove = uciMoves[i];
+    const sideToMove = fens[i].split(" ")[1];
+    const isWhiteMove = sideToMove === "w";
     
-    let pVal = prev.cp; if (prev.mate !== null) pVal = prev.mate > 0 ? 10000 : -10000;
-    let cVal = curr.cp; if (curr.mate !== null) cVal = curr.mate > 0 ? 10000 : -10000;
+    // 1. Forced check
+    const prevGame = new Chess(fens[i]);
+    const isForced = prevGame.moves().length === 1;
     
-    // UCI engines score relative to the side to move.
-    // If it's White's turn, pVal is White's advantage. 
-    // After the move, it's Black's turn, so cVal is Black's advantage.
-    // White's CPL is (White's advantage before) - (White's advantage after)
-    // = pVal - (-cVal) = pVal + cVal.
-    let cpl = Math.max(0, pVal + cVal);
-    let cls = "Good"; 
-
-    // CHESS.COM CLASSIFICATION LOGIC
-    if (i < 8 && cpl < 30) cls = "Book";
-    else if (cpl < 8) cls = "Best";
-    else if (cpl < 15) cls = "Excellent";
-    else if (cpl < 30) cls = "Good";
-    else if (cpl < 60) cls = "Inaccuracy";
-    else if (cpl < 180) cls = "Mistake";
-    else cls = "Blunder";
-
-    // Detect Brilliant/Great
-    if (cls === "Best" && Math.abs(cVal) > 200 && cpl < 2) {
-       if (history[i].captured || history[i].san.includes('x')) cls = "Brilliant";
-       else cls = "Great";
+    let classification = "Good";
+    
+    if (isForced) {
+      classification = "Forced";
+    } else {
+      const lastPositionWinPercentage = positionsWinPercentage[i];
+      const positionWinPercentage = positionsWinPercentage[i+1];
+      const winPercentageDiff = (positionWinPercentage - lastPositionWinPercentage) * (isWhiteMove ? 1 : -1);
+      
+      // 2. Opening check
+      if (i < 8 && winPercentageDiff >= -2.0) {
+        classification = "Book";
+      } else {
+        // Multi-line alternative PV check
+        let lastPositionAlternativeLineWinPercentage = undefined;
+        let bestLinePvToPlay = [];
+        if (prevPosition.lines && prevPosition.lines.length > 0) {
+          bestLinePvToPlay = prevPosition.lines[0].pv || [];
+          const altLine = prevPosition.lines.find(line => line.pv && line.pv[0] !== playedMove);
+          if (altLine) {
+            lastPositionAlternativeLineWinPercentage = getLineWinPercentage(altLine, sideToMove);
+          }
+        }
+        
+        // 3. Splendid Move (Sacrifice)
+        let isSplendid = false;
+        if (lastPositionAlternativeLineWinPercentage !== undefined) {
+          if (winPercentageDiff >= -2.0) {
+            const isPieceSacrifice = getIsPieceSacrifice(fens[i], playedMove, bestLinePvToPlay);
+            if (isPieceSacrifice && !isLosingOrAlternateCompletelyWinning(positionWinPercentage, lastPositionAlternativeLineWinPercentage, isWhiteMove)) {
+              isSplendid = true;
+            }
+          }
+        }
+        
+        if (isSplendid) {
+          classification = "Splendid";
+        } else {
+          // 4. Perfect Move (Only Move / Outcome Changer)
+          let isPerfect = false;
+          if (lastPositionAlternativeLineWinPercentage !== undefined) {
+            if (winPercentageDiff >= -2.0) {
+              const fenTwoMovesAgo = i > 0 ? fens[i - 1] : null;
+              const uciNextTwoMoves = i > 0 ? [uciMoves[i - 1], uciMoves[i]] : null;
+              const isRecapture = fenTwoMovesAgo && uciNextTwoMoves && isSimplePieceRecapture(fenTwoMovesAgo, uciNextTwoMoves);
+              
+              if (!isRecapture && !isLosingOrAlternateCompletelyWinning(positionWinPercentage, lastPositionAlternativeLineWinPercentage, isWhiteMove)) {
+                const hasChangedGameOutcome = winPercentageDiff > 10 && (
+                  (lastPositionWinPercentage < 50 && positionWinPercentage > 50) ||
+                  (lastPositionWinPercentage > 50 && positionWinPercentage < 50)
+                );
+                const isTheOnlyGoodMove = (positionWinPercentage - lastPositionAlternativeLineWinPercentage) * (isWhiteMove ? 1 : -1) > 10;
+                
+                if (hasChangedGameOutcome || isTheOnlyGoodMove) {
+                  isPerfect = true;
+                }
+              }
+            }
+          }
+          
+          if (isPerfect) {
+            classification = "Perfect";
+          } else {
+            // 5. Best Move
+            const bestMovePlayed = bestLinePvToPlay.length > 0 && playedMove === bestLinePvToPlay[0];
+            if (bestMovePlayed) {
+              classification = "Best";
+            } else {
+              // 6. Basic Classifications
+              if (winPercentageDiff < -20.0) classification = "Blunder";
+              else if (winPercentageDiff < -10.0) classification = "Mistake";
+              else if (winPercentageDiff < -5.0) classification = "Inaccuracy";
+              else if (winPercentageDiff < -2.0) classification = "Okay";
+              else classification = "Excellent";
+            }
+          }
+        }
+      }
     }
     
-    if (turn === 'w') wCPLs.push(cpl); else bCPLs.push(cpl);
+    // Map classification to standard badges
+    let cls = "Good";
+    if (classification === "Splendid") cls = "Brilliant";
+    else if (classification === "Perfect") cls = "Great";
+    else if (classification === "Okay") cls = "Good";
+    else cls = classification; // Best, Excellent, Book, Forced, Inaccuracy, Mistake, Blunder
+    
     tallies[cls.toLowerCase()]++;
-    fullGameAnalysis.push({ move: history[i], eval: curr, cpl: cpl, classification: cls });
+    fullGameAnalysis.push({ 
+      move: history[i], 
+      eval: rawPosition, 
+      cpl: 0, 
+      classification: cls,
+      bestMove: prevPosition.bestMove
+    });
   }
-  displayAnalysisReport(wCPLs, bCPLs, tallies);
+  fullGameAnalysis.startingEval = evals[0];
+  
+  displayAnalysisReport(accW, accB, tallies);
   const infoEl = document.getElementById('game-info-panel');
   if (infoEl) infoEl.innerText = "Analysis Mode";
 }
 
-function displayAnalysisReport(w, b, t) {
-  const acplW = w.reduce((a,x)=>a+x,0)/(w.length||1); const acplB = b.reduce((a,x)=>a+x,0)/(b.length||1);
-  const accW = Math.round(Math.max(0, 100 - acplW/2)); const accB = Math.round(Math.max(0, 100 - acplB/2));
-  document.getElementById('white-elo').innerText = Math.max(400, Math.min(3000, Math.round(2900 - acplW*22)));
-  document.getElementById('black-elo').innerText = Math.max(400, Math.min(3000, Math.round(2900 - acplB*22)));
-  document.getElementById('white-acc').innerText = accW + "%"; document.getElementById('black-acc').innerText = accB + "%";
+function displayAnalysisReport(accW, accB, t) {
+  const eloW = Math.round(400 + accW * 26);
+  const eloB = Math.round(400 + accB * 26);
+  document.getElementById('white-elo').innerText = eloW;
+  document.getElementById('black-elo').innerText = eloB;
+  document.getElementById('white-acc').innerText = accW + "%"; 
+  document.getElementById('black-acc').innerText = accB + "%";
   document.getElementById('white-acc-ring').style.strokeDashoffset = 226 - (226*accW)/100;
   document.getElementById('black-acc-ring').style.strokeDashoffset = 226 - (226*accB)/100;
   
@@ -1341,6 +2124,7 @@ function displayAnalysisReport(w, b, t) {
     {l:'Excellent',k:'excellent',c:'var(--color-excellent)', i:'✓'},
     {l:'Good',k:'good',c:'var(--color-good)', i:'✓'},
     {l:'Book',k:'book',c:'var(--color-book)', i:'📖'},
+    {l:'Forced',k:'forced',c:'var(--color-forced)', i:'🔒'},
     {l:'Inaccuracy',k:'inaccuracy',c:'var(--color-inaccuracy)', i:'?!'},
     {l:'Mistake',k:'mistake',c:'var(--color-mistake)', i:'?'},
     {l:'Blunder',k:'blunder',c:'var(--color-blunder)', i:'??'}
@@ -1353,7 +2137,9 @@ function displayAnalysisReport(w, b, t) {
     </div>
   `).join('');
 }
+
 function exitAnalysisMode() { document.getElementById('analysis-controls').classList.add('hidden'); document.getElementById('analysis-report').classList.add('hidden'); document.getElementById('main-controls').classList.remove('hidden'); openWelcomeScreen(); }
+
 function goToAnalysisStep(index) {
   const currentHistory = (gameMode === 'analysis') ? analysisHistory : game.history({ verbose: true });
   if (index < -1 || index >= currentHistory.length) return;
@@ -1381,6 +2167,7 @@ function goToAnalysisStep(index) {
         excellent: '✓', 
         good: '✓', 
         book: '📖', 
+        forced: '🔒',
         inaccuracy: '?!', 
         mistake: '?', 
         blunder: '??' 
@@ -1391,7 +2178,29 @@ function goToAnalysisStep(index) {
       toSq.appendChild(badge);
     }
   }
-  triggerEvaluation(16);
+  // Load from pre-calculated analysis instead of starting live evaluation loop on each move again
+  if (gameMode === 'analysis' && fullGameAnalysis.length > 0) {
+    let cp, mate, bestMove, lines;
+    if (index === -1) {
+      const start = fullGameAnalysis.startingEval || { cp: 0, mate: null, bestMove: null, lines: [] };
+      cp = start.cp;
+      mate = start.mate;
+      bestMove = start.bestMove;
+      lines = start.lines;
+    } else if (fullGameAnalysis[index]) {
+      const item = fullGameAnalysis[index];
+      cp = item.eval.cp;
+      mate = item.eval.mate;
+      bestMove = item.bestMove;
+      lines = item.eval.lines;
+    }
+    
+    // Update eval bar and engine UI using the cached values instantly
+    updateEvalBar(cp, mate);
+    updateEngineUI(cp, mate, bestMove, lines, 12);
+  } else {
+    triggerEvaluation(16);
+  }
 }
 
 function safeAddListener(id, event, handler) {
@@ -1499,6 +2308,34 @@ document.addEventListener('DOMContentLoaded', () => {
   safeAddListener('btnMenu', 'click', openWelcomeScreen);
   safeAddListener('btnFlip', 'click', () => { boardFlipped = !boardFlipped; updateBoard(); });
   safeAddListener('btnTheme', 'click', () => { document.body.classList.toggle('theme-light'); document.body.classList.toggle('theme-dark'); });
+
+  // Hook up engine depth selection change and live evaluation callback
+  safeAddListener('eval-depth-select', 'change', () => triggerEvaluation());
+  if (typeof enginePool !== 'undefined') {
+    enginePool.onEvalResult = (cp, mate, taskId, move, rawLine) => {
+      if (taskId === 'raw' && typeof rawLine === 'string') {
+        const depthMatch = rawLine.match(/info depth (\d+)/);
+        if (depthMatch) {
+          const currentDepth = parseInt(depthMatch[1], 10);
+          const depthSelectEl = document.getElementById('eval-depth-select');
+          const targetDepth = depthSelectEl ? parseInt(depthSelectEl.value, 10) : 16;
+          
+          let scoreCp = null;
+          let scoreMate = null;
+          const cpMatch = rawLine.match(/score cp (-?\d+)/);
+          if (cpMatch) scoreCp = parseInt(cpMatch[1], 10);
+          const mateMatch = rawLine.match(/score mate (-?\d+)/);
+          if (mateMatch) scoreMate = parseInt(mateMatch[1], 10);
+          
+          const pvMatch = rawLine.match(/ pv (.+)/);
+          const pvMoveStr = pvMatch ? pvMatch[1].split(' ')[0] : null;
+          const pvArray = pvMatch ? pvMatch[1].split(' ') : [];
+
+          updateEngineStatus("thinking", currentDepth, targetDepth, scoreCp, scoreMate, pvMoveStr, pvArray);
+        }
+      }
+    };
+  }
   safeAddListener('btnUndo', 'click', () => {
     if (playerRole === 'spectator') return;
     if (gameMode === 'online') { 
