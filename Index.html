@@ -86,6 +86,9 @@
             <button class="btn-secondary" style="width:100%; margin-bottom:12px;" onclick="startLocalMultiplayer()">
               <span style="font-size:18px;">🤝</span> Pass & Play
             </button>
+            <button class="btn-secondary" style="width:100%; margin-bottom:12px;" onclick="start4PlayerGame()">
+              <span style="font-size:18px;">👑</span> 4-Player Local
+            </button>
             <button class="btn-secondary" style="width:100%; margin-bottom:12px;" onclick="showMenu('menu-online')">
               <span style="font-size:18px;">🌐</span> Play Online
             </button>
@@ -189,6 +192,7 @@
               <div class="settings-tab active" data-tab="board" onclick="switchSettingsTab('board')">Board</div>
               <div class="settings-tab" data-tab="gameplay" onclick="switchSettingsTab('gameplay')">Gameplay</div>
               <div class="settings-tab" data-tab="sound" onclick="switchSettingsTab('sound')">Display</div>
+              <div class="settings-tab" data-tab="lichess" onclick="switchSettingsTab('lichess')">Lichess</div>
             </div>
             
             <div class="settings-list" style="text-align:left; max-height:320px; overflow-y:auto; padding-right:5px;">
@@ -374,6 +378,40 @@
                   <div class="setting-card-info">
                     <label style="color:var(--text-secondary);">Board Size</label>
                     <span>Use browser zoom (Ctrl +/-) to resize</span>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- LICHESS TAB -->
+              <div id="settings-tab-lichess" class="settings-section hidden">
+                <div style="margin-bottom:8px; font-size:11px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; text-align:left;">Lichess Integration</div>
+                
+                <div id="lichess-login-card" class="setting-card" style="flex-direction:column; align-items:stretch; gap:10px;">
+                  <div class="setting-card-info" style="margin-bottom:5px; text-align:left;">
+                    <label>Lichess Personal Access Token</label>
+                    <span>Create a token with <code>r:profile</code> scope on lichess.org</span>
+                  </div>
+                  <div style="display:flex; gap:5px;">
+                    <input type="password" id="lichess-token-input" placeholder="lip_..." style="flex:1; background:#1a1a1a; border:1px solid #444; color:#fff; padding:8px 12px; border-radius:4px; font-size:12px;">
+                    <button class="btn-primary" onclick="connectLichess()" style="padding:6px 12px; font-size:12px; margin:0; width:auto; min-width:auto;">Connect</button>
+                  </div>
+                </div>
+
+                <div id="lichess-profile-card" class="setting-card hidden" style="flex-direction:column; align-items:stretch; gap:10px; background:rgba(129,182,76,0.1); border:1px solid var(--accent-green);">
+                  <div style="display:flex; align-items:center; gap:10px;">
+                    <div style="font-size:24px;">👤</div>
+                    <div style="flex:1;">
+                      <div id="lichess-username" style="font-weight:bold; color:var(--text-primary); text-align:left;">--</div>
+                      <div id="lichess-rating" style="font-size:11px; color:var(--text-secondary); text-align:left;">Blitz: -- | Rapid: --</div>
+                    </div>
+                    <button class="btn-primary" onclick="disconnectLichess()" style="background:#c0392b; border-color:#922b21; padding:4px 8px; font-size:11px; width:auto; min-width:auto; margin:0;">Disconnect</button>
+                  </div>
+                </div>
+
+                <div id="lichess-games-section" class="hidden" style="margin-top:15px;">
+                  <div style="margin-bottom:8px; font-size:11px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; text-align:left;">Recent Lichess Games</div>
+                  <div id="lichess-games-list" style="max-height:180px; overflow-y:auto; display:flex; flex-direction:column; gap:5px; padding-right:5px;">
+                    <span style="font-size:11px; color:var(--text-secondary);">No games loaded.</span>
                   </div>
                 </div>
               </div>
