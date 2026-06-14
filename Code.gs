@@ -1,6 +1,7 @@
-function doGet() {
-  return HtmlService.createTemplateFromFile('Index')
-    .evaluate()
+function doGet(e) {
+  var template = HtmlService.createTemplateFromFile('Index');
+  template.urlParams = e ? e.parameter : {};
+  return template.evaluate()
     .setTitle('Chess Pro - GAS')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }

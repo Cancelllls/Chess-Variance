@@ -114,14 +114,25 @@ class EnginePool {
       const multipv = task.multipv || 1;
       idleWorker.postMessage('setoption name MultiPV value ' + multipv);
       
+      if (task.skillLevel !== undefined && task.skillLevel !== null) {
+        idleWorker.postMessage('setoption name Skill Level value ' + task.skillLevel);
+      } else {
+        idleWorker.postMessage('setoption name Skill Level value 20');
+      }
+      
       idleWorker.postMessage('position fen ' + task.fen);
-      idleWorker.postMessage('go depth ' + task.depth);
+      
+      let goCommand = 'go depth ' + task.depth;
+      if (task.moveTime) {
+        goCommand += ' movetime ' + task.moveTime;
+      }
+      idleWorker.postMessage(goCommand);
     }
   }
 
-  evaluate(fen, depth = 10, taskId = null, callback = null, multipv = 1) {
+  evaluate(fen, depth = 10, taskId = null, callback = null, multipv = 1, skillLevel = 20, moveTime = null) {
     this.initPool();
-    const task = { fen, depth, taskId, callback, multipv };
+    const task = { fen, depth, taskId, callback, multipv, skillLevel, moveTime };
     if (taskId === 'live' || taskId === 'ai_move') {
       this.taskQueue = this.taskQueue.filter(t => t.taskId !== taskId);
       this.taskQueue.unshift(task);

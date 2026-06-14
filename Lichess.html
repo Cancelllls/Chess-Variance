@@ -1,0 +1,202 @@
+<script>
+// --- Lichess OAuth PKCE Integration ---
+const LICHESS_CLIENT_ID = 'chess-pro-gas'; // Using a generic one or expected one
+// The redirect URI is the current GAS URL. We can get it dynamically but Google Apps Script URLs are tricky.
+// Usually, we use location.href for the authorize url if it's the exact GAS endpoint.
+
+// Utilities for PKCE
+function base64URLEncode(str) {
+  return btoa(String.fromCharCode.apply(null, new Uint8Array(str)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function generateCodeChallenge(codeVerifier) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(codeVerifier);
+  const digest = await window.crypto.subtle.digest('SHA-256', data);
+  return base64URLEncode(digest);
+}
+
+function generateRandomString(length) {
+  const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  let result = '';
+  const values = new Uint32Array(length);
+  window.crypto.getRandomValues(values);
+  for (let i = 0; i < length; i++) {
+    result += charset[values[i] % charset.length];
+  }
+  return result;
+}
+
+let lichessToken = localStorage.getItem('lichess_token');
+let lichessUser = null;
+
+async function checkLichessLogin() {
+  // 1. Check if we just came back from Lichess auth
+  if (window.URL_PARAMS && window.URL_PARAMS.code) {
+    console.log("Found Lichess auth code, exchanging for token...");
+    await exchangeLichessCode(window.URL_PARAMS.code);
+    // remove code from URL visually if possible
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+
+  // 2. Check token validity and get user info
+  if (lichessToken) {
+    try {
+      const res = await fetch('https://lichess.org/api/account', {
+        headers: { 'Authorization': 'Bearer ' + lichessToken }
+      });
+      if (res.ok) {
+        lichessUser = await res.json();
+        updateLichessUI();
+        return;
+      } else {
+        console.warn("Lichess token invalid, clearing.");
+        logoutLichess();
+      }
+    } catch(e) {
+      console.error("Error fetching Lichess account", e);
+    }
+  }
+  updateLichessUI();
+}
+
+async function loginLichess() {
+  const state = generateRandomString(32);
+  const codeVerifier = generateRandomString(64);
+  localStorage.setItem('lichess_pkce_state', state);
+  localStorage.setItem('lichess_pkce_verifier', codeVerifier);
+
+  const codeChallenge = await generateCodeChallenge(codeVerifier);
+  
+  // Try to use script.google.com url or fallback to current url
+  // Note: App script macros have /exec at the end
+  const redirectUri = window.location.href.split('?')[0];
+
+  const authUrl = `https://lichess.org/oauth?response_type=code` + 
+    `&client_id=${LICHESS_CLIENT_ID}` + 
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` + 
+    `&code_challenge_method=S256` + 
+    `&code_challenge=${codeChallenge}` + 
+    `&state=${state}` + 
+    `&scope=board:play`; // Example scope
+
+  window.location.href = authUrl;
+}
+
+async function exchangeLichessCode(code) {
+  const codeVerifier = localStorage.getItem('lichess_pkce_verifier');
+  const state = localStorage.getItem('lichess_pkce_state');
+  
+  if (!codeVerifier) {
+    console.error("Missing PKCE verifier");
+    return;
+  }
+  
+  const redirectUri = window.location.href.split('?')[0];
+  
+  try {
+    const res = await fetch('https://lichess.org/api/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: code,
+        code_verifier: codeVerifier,
+        redirect_uri: redirectUri,
+        client_id: LICHESS_CLIENT_ID
+      })
+    });
+    
+    const data = await res.json();
+    if (data.access_token) {
+      lichessToken = data.access_token;
+      localStorage.setItem('lichess_token', lichessToken);
+      localStorage.removeItem('lichess_pkce_verifier');
+      localStorage.removeItem('lichess_pkce_state');
+      await checkLichessLogin();
+    } else {
+      console.error("Token exchange failed", data);
+    }
+  } catch(e) {
+    console.error("Error exchanging token", e);
+  }
+}
+
+function logoutLichess() {
+  if (lichessToken) {
+    fetch('https://lichess.org/api/token', {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + lichessToken }
+    });
+  }
+  lichessToken = null;
+  lichessUser = null;
+  localStorage.removeItem('lichess_token');
+  updateLichessUI();
+}
+
+function updateLichessUI() {
+  const statusEl = document.getElementById('lichess-status-text');
+  const loginBtn = document.getElementById('btn-lichess-login');
+  const logoutBtn = document.getElementById('btn-lichess-logout');
+  const menuBtn = document.getElementById('btn-lichess-menu');
+
+  if (lichessUser) {
+    if (statusEl) statusEl.innerText = `Logged in as ${lichessUser.username}`;
+    if (loginBtn) loginBtn.classList.add('hidden');
+    if (logoutBtn) logoutBtn.classList.remove('hidden');
+    if (menuBtn) menuBtn.classList.remove('hidden');
+  } else {
+    if (statusEl) statusEl.innerText = 'Not logged in';
+    if (loginBtn) loginBtn.classList.remove('hidden');
+    if (logoutBtn) logoutBtn.classList.add('hidden');
+    if (menuBtn) menuBtn.classList.add('hidden');
+  }
+}
+
+async function startLichessBotGame() {
+  const loading = document.getElementById('lichess-loading');
+  if (loading) loading.classList.remove('hidden');
+  try {
+    const res = await fetch('https://lichess.org/api/challenge/maia1', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + lichessToken },
+      body: new URLSearchParams({
+        rated: false,
+        clock_limit: 300,
+        clock_increment: 0,
+        color: 'random',
+        level: 1
+      })
+    });
+    const data = await res.json();
+    if (data.challenge && data.challenge.id) {
+      alert("Challenge sent! ID: " + data.challenge.id + "\n(Integration to play directly on board is WIP)");
+    } else {
+      alert("Failed to challenge bot");
+    }
+  } catch(e) {
+    alert("Error challenging bot");
+  } finally {
+    if (loading) loading.classList.add('hidden');
+  }
+}
+
+async function seekLichessGame() {
+  const loading = document.getElementById('lichess-loading');
+  if (loading) loading.classList.remove('hidden');
+  try {
+    alert("Lichess Seek API initiated.\n(Streaming Board API integration required for full gameplay)");
+  } finally {
+    if (loading) loading.classList.add('hidden');
+  }
+}
+
+// Call on startup
+window.addEventListener('DOMContentLoaded', () => {
+  checkLichessLogin();
+});
+</script>
