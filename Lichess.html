@@ -17,15 +17,27 @@ async function generateCodeChallenge(codeVerifier) {
 function generateRandomString(length) {
   const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
   let result = '';
-  const values = new Uint32Array(length);
-  window.crypto.getRandomValues(values);
-  for (let i = 0; i < length; i++) {
-    result += charset[values[i] % charset.length];
+  try {
+    const values = new Uint32Array(length);
+    window.crypto.getRandomValues(values);
+    for (let i = 0; i < length; i++) {
+      result += charset[values[i] % charset.length];
+    }
+  } catch(e) {
+    console.warn("Crypto API blocked, falling back to Math.random", e);
+    for (let i = 0; i < length; i++) {
+      result += charset[Math.floor(Math.random() * charset.length)];
+    }
   }
   return result;
 }
 
-let lichessToken = localStorage.getItem('lichess_token');
+let lichessToken = null;
+try {
+  lichessToken = localStorage.getItem('lichess_token');
+} catch(e) {
+  console.warn("localStorage blocked by browser privacy shields.", e);
+}
 let lichessUser = null;
 
 async function checkLichessLogin() {
@@ -67,30 +79,54 @@ async function checkLichessLogin() {
   }
 }
 
+let preparedAuthUrl = null;
+
 function prepareLichessLoginUrl() {
-  const state = generateRandomString(32);
-  const codeVerifier = generateRandomString(64);
-  localStorage.setItem('lichess_pkce_state', state);
-  localStorage.setItem('lichess_pkce_verifier', codeVerifier);
-  
-  const redirectUri = window.SCRIPT_URL || window.location.href.split('?')[0];
+  try {
+    const state = generateRandomString(32);
+    const codeVerifier = generateRandomString(64);
+    
+    // This will throw if Brave Shields blocks cross-origin localStorage
+    localStorage.setItem('lichess_pkce_state', state);
+    localStorage.setItem('lichess_pkce_verifier', codeVerifier);
+    
+    const redirectUri = window.SCRIPT_URL || window.location.href.split('?')[0];
 
-  const authUrl = `https://lichess.org/oauth?response_type=code` + 
-    `&client_id=${LICHESS_CLIENT_ID}` + 
-    `&redirect_uri=${encodeURIComponent(redirectUri)}` + 
-    `&code_challenge_method=plain` + 
-    `&code_challenge=${codeVerifier}` + 
-    `&state=${state}` + 
-    `&scope=board:play`;
+    preparedAuthUrl = `https://lichess.org/oauth?response_type=code` + 
+      `&client_id=${LICHESS_CLIENT_ID}` + 
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` + 
+      `&code_challenge_method=plain` + 
+      `&code_challenge=${codeVerifier}` + 
+      `&state=${state}` + 
+      `&scope=board:play`;
 
-  const btn = document.getElementById('btn-lichess-login');
-  if (btn) {
-    btn.href = authUrl;
+  } catch(e) {
+    console.error("Failed to prepare Lichess Login URL. Privacy shields likely blocking localStorage.", e);
+    preparedAuthUrl = null;
+  }
+}
+
+function handleLichessLoginClick() {
+  if (preparedAuthUrl) {
+    const newWindow = window.open(preparedAuthUrl, '_blank');
+    if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+       // Popup blocked!
+       document.getElementById('lichess-status-text').innerText = "Popup blocked! Allow popups to login.";
+       document.getElementById('lichess-status-text').style.color = "#ff4444";
+    }
+  } else {
+    document.getElementById('lichess-status-text').innerText = "Error: Shields blocking localStorage.";
+    document.getElementById('lichess-status-text').style.color = "#ff4444";
   }
 }
 
 async function exchangeLichessCode(code) {
-  const codeVerifier = localStorage.getItem('lichess_pkce_verifier');
+  let codeVerifier = null;
+  try {
+    codeVerifier = localStorage.getItem('lichess_pkce_verifier');
+  } catch(e) {
+    console.error("localStorage blocked when reading verifier.", e);
+  }
   
   if (!codeVerifier) {
     console.error("Missing PKCE verifier");
@@ -117,9 +153,13 @@ async function exchangeLichessCode(code) {
     const data = await res.json();
     if (data.access_token) {
       lichessToken = data.access_token;
-      localStorage.setItem('lichess_token', lichessToken);
-      localStorage.removeItem('lichess_pkce_verifier');
-      localStorage.removeItem('lichess_pkce_state');
+      try {
+        localStorage.setItem('lichess_token', lichessToken);
+        localStorage.removeItem('lichess_pkce_verifier');
+        localStorage.removeItem('lichess_pkce_state');
+      } catch(e) {
+        console.warn("Could not save token to localStorage.", e);
+      }
     } else {
       console.error("Token exchange failed", data);
       alert("Lichess Token Exchange failed: " + (data.error_description || data.error));
