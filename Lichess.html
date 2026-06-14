@@ -40,6 +40,12 @@ async function checkLichessLogin() {
       } catch(e) {
         console.warn("Could not replace history state:", e);
       }
+      // If we are in a popup/new tab, show a success message and try to close
+      if (window.opener || window.history.length === 1) {
+        document.body.innerHTML = '<div style="display:flex; justify-content:center; align-items:center; height:100vh; background:#111; color:#0f0; font-family:sans-serif; text-align:center; padding:20px;"><div><h1 style="font-size:40px; margin-bottom:10px;">✅</h1><h2>Login Successful!</h2><p style="color:#ccc;">You can safely close this tab and return to the game.</p></div></div>';
+        setTimeout(() => window.close(), 3000);
+        return;
+      }
     }
 
     // 2. Check token validity and get user info
@@ -198,5 +204,13 @@ async function seekLichessGame() {
 // Call on startup
 window.addEventListener('DOMContentLoaded', () => {
   checkLichessLogin();
+});
+
+// Listen for cross-tab login completion
+window.addEventListener('storage', (e) => {
+  if (e.key === 'lichess_token') {
+    lichessToken = e.newValue;
+    checkLichessLogin();
+  }
 });
 </script>
