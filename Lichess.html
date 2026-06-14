@@ -45,7 +45,30 @@ async function checkLichessLogin() {
     // 1. Check if we just came back from Lichess auth
     if (window.URL_PARAMS && window.URL_PARAMS.code) {
       console.log("Found Lichess auth code, exchanging for token...");
-      await exchangeLichessCode(window.URL_PARAMS.code);
+      
+      const state = window.URL_PARAMS.state;
+      const code = window.URL_PARAMS.code;
+      
+      let codeVerifier = null;
+      try {
+         codeVerifier = localStorage.getItem('lichess_pkce_verifier');
+      } catch(e) {}
+      
+      // Fallback: If localStorage failed to persist it, fetch it from GAS server cache
+      if (!codeVerifier && state && typeof google !== 'undefined' && google.script && google.script.run) {
+         codeVerifier = await new Promise((resolve) => {
+            google.script.run.withSuccessHandler(resolve).withFailureHandler(()=>resolve(null)).getLichessPkce(state);
+         });
+      }
+      
+      if (codeVerifier) {
+         await exchangeLichessCode(code, codeVerifier);
+      } else {
+         console.error("CRITICAL: Could not recover PKCE verifier.");
+         document.getElementById('lichess-status-text').innerText = "Session lost due to privacy shields.";
+         document.getElementById('lichess-status-text').style.color = "#ff4444";
+      }
+
       // Remove code from URL visually if possible (sandbox may block this)
       try {
         window.history.replaceState({}, document.title, window.location.pathname);
@@ -82,57 +105,60 @@ async function checkLichessLogin() {
 let preparedAuthUrl = null;
 
 function prepareLichessLoginUrl() {
+  const state = generateRandomString(32);
+  const codeVerifier = generateRandomString(64);
+  
   try {
-    const state = generateRandomString(32);
-    const codeVerifier = generateRandomString(64);
-    
-    // This will throw if Brave Shields blocks cross-origin localStorage
     localStorage.setItem('lichess_pkce_state', state);
     localStorage.setItem('lichess_pkce_verifier', codeVerifier);
-    
-    const redirectUri = window.SCRIPT_URL || window.location.href.split('?')[0];
-
-    preparedAuthUrl = `https://lichess.org/oauth?response_type=code` + 
-      `&client_id=${LICHESS_CLIENT_ID}` + 
-      `&redirect_uri=${encodeURIComponent(redirectUri)}` + 
-      `&code_challenge_method=plain` + 
-      `&code_challenge=${codeVerifier}` + 
-      `&state=${state}` + 
-      `&scope=board:play`;
-
   } catch(e) {
-    console.error("Failed to prepare Lichess Login URL. Privacy shields likely blocking localStorage.", e);
-    preparedAuthUrl = null;
+    console.warn("localStorage blocked. Relying on GAS CacheService.");
   }
+  
+  // Backup: Store in GAS CacheService to bypass cross-origin localStorage restrictions
+  if (typeof google !== 'undefined' && google.script && google.script.run) {
+    google.script.run.saveLichessPkce(state, codeVerifier);
+  }
+  
+  const redirectUri = window.SCRIPT_URL || window.location.href.split('?')[0];
+
+  preparedAuthUrl = `https://lichess.org/oauth?response_type=code` + 
+    `&client_id=${LICHESS_CLIENT_ID}` + 
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` + 
+    `&code_challenge_method=plain` + 
+    `&code_challenge=${codeVerifier}` + 
+    `&state=${state}` + 
+    `&scope=board:play`;
 }
 
 function handleLichessLoginClick() {
   if (preparedAuthUrl) {
-    const newWindow = window.open(preparedAuthUrl, '_blank');
-    if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-       // Popup blocked!
-       document.getElementById('lichess-status-text').innerText = "Popup blocked! Allow popups to login.";
-       document.getElementById('lichess-status-text').style.color = "#ff4444";
+    const a = document.createElement('a');
+    a.href = preparedAuthUrl;
+    a.target = '_top';
+    document.body.appendChild(a);
+    try {
+      a.click();
+    } catch(e) {
+      console.warn("Click failed", e);
     }
+    
+    // Fallback directly assigning top if clicking fails
+    setTimeout(() => {
+      try {
+        window.top.location.href = preparedAuthUrl;
+      } catch(err) {
+        document.getElementById('lichess-status-text').innerText = "Navigation blocked! Disable Shields.";
+        document.getElementById('lichess-status-text').style.color = "#ff4444";
+      }
+    }, 100);
   } else {
-    document.getElementById('lichess-status-text').innerText = "Error: Shields blocking localStorage.";
+    document.getElementById('lichess-status-text').innerText = "Error preparing auth URL.";
     document.getElementById('lichess-status-text').style.color = "#ff4444";
   }
 }
 
-async function exchangeLichessCode(code) {
-  let codeVerifier = null;
-  try {
-    codeVerifier = localStorage.getItem('lichess_pkce_verifier');
-  } catch(e) {
-    console.error("localStorage blocked when reading verifier.", e);
-  }
-  
-  if (!codeVerifier) {
-    console.error("Missing PKCE verifier");
-    return;
-  }
-  
+async function exchangeLichessCode(code, codeVerifier) {
   const redirectUri = window.SCRIPT_URL || window.location.href.split('?')[0];
   
   try {
