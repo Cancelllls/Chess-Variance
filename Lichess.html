@@ -61,54 +61,35 @@ async function checkLichessLogin() {
   }
 }
 
-async function loginLichess() {
+function loginLichess() {
   try {
     const state = generateRandomString(32);
     const codeVerifier = generateRandomString(64);
     localStorage.setItem('lichess_pkce_state', state);
     localStorage.setItem('lichess_pkce_verifier', codeVerifier);
-
-    let codeChallengeMethod = 'S256';
-    let codeChallenge = '';
-    
-    // Safe check for Crypto API (often restricted in iframes)
-    if (window.crypto && window.crypto.subtle) {
-      codeChallenge = await generateCodeChallenge(codeVerifier);
-    } else {
-      console.warn("Crypto.subtle not available in iframe sandbox. Falling back to plain method.");
-      codeChallengeMethod = 'plain';
-      codeChallenge = codeVerifier;
-    }
     
     const redirectUri = window.SCRIPT_URL || window.location.href.split('?')[0];
 
+    // Using 'plain' challenge method forces this function to be fully synchronous.
+    // This prevents the browser from dropping the "user activation" flag which is
+    // required to authorize escaping the Google Apps Script iframe via target="_top".
     const authUrl = `https://lichess.org/oauth?response_type=code` + 
       `&client_id=${LICHESS_CLIENT_ID}` + 
       `&redirect_uri=${encodeURIComponent(redirectUri)}` + 
-      `&code_challenge_method=${codeChallengeMethod}` + 
-      `&code_challenge=${codeChallenge}` + 
+      `&code_challenge_method=plain` + 
+      `&code_challenge=${codeVerifier}` + 
       `&state=${state}` + 
       `&scope=board:play`;
 
     console.log("Initiating Lichess OAuth to:", authUrl);
 
-    // Strategy 1: Create a hidden anchor tag with target="_top" and click it
-    // This is the most reliable way to escape strict iframe sandboxes in modern browsers.
+    // Escape the sandbox
     const a = document.createElement('a');
     a.href = authUrl;
     a.target = '_top';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-
-    // Strategy 2: Direct assignment fallback
-    setTimeout(() => {
-      try {
-        window.top.location.href = authUrl;
-      } catch(e) {
-        console.warn("Direct top location assignment failed:", e);
-      }
-    }, 100);
 
   } catch(err) {
     alert("Failed to initiate Lichess login:\n" + err.message);
