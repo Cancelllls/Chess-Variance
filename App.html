@@ -1088,9 +1088,12 @@ function updateBoard() {
     let existingPiece = sq.querySelector('.piece');
     
     // If there's a piece that moved here, try to reuse the element for animation
-    if (piece && !existingPiece && lastMove && sq.dataset.square === lastMove.to) {
+    if (piece && lastMove && sq.dataset.square === lastMove.to) {
       const movedPieceInfo = piecePositions.get(lastMove.from);
       if (movedPieceInfo) {
+        if (existingPiece) {
+          existingPiece.remove(); // Remove captured piece
+        }
         existingPiece = movedPieceInfo.el;
         sq.appendChild(existingPiece);
       }
@@ -1171,13 +1174,13 @@ function updateBoard() {
         // Invert: Put the piece back where it was before the DOM update
         pEl.style.transition = 'none';
         pEl.style.zIndex = '1000';
-        pEl.style.transform = `translate(${dx}px, ${dy}px)`;
+        pEl.style.transform = boardFlipped ? `translate(${dx}px, ${dy}px) rotate(180deg)` : `translate(${dx}px, ${dy}px)`;
         
         // Play: Smoothly transition to the destination
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             pEl.style.transition = ''; // Restore stylesheet transition
-            pEl.style.transform = '';
+            pEl.style.transform = boardFlipped ? 'rotate(180deg)' : '';
             
             pEl.addEventListener('transitionend', () => {
               pEl.style.zIndex = '';
