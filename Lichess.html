@@ -61,39 +61,25 @@ async function checkLichessLogin() {
   }
 }
 
-function loginLichess() {
-  try {
-    const state = generateRandomString(32);
-    const codeVerifier = generateRandomString(64);
-    localStorage.setItem('lichess_pkce_state', state);
-    localStorage.setItem('lichess_pkce_verifier', codeVerifier);
-    
-    const redirectUri = window.SCRIPT_URL || window.location.href.split('?')[0];
+function prepareLichessLoginUrl() {
+  const state = generateRandomString(32);
+  const codeVerifier = generateRandomString(64);
+  localStorage.setItem('lichess_pkce_state', state);
+  localStorage.setItem('lichess_pkce_verifier', codeVerifier);
+  
+  const redirectUri = window.SCRIPT_URL || window.location.href.split('?')[0];
 
-    // Using 'plain' challenge method forces this function to be fully synchronous.
-    // This prevents the browser from dropping the "user activation" flag which is
-    // required to authorize escaping the Google Apps Script iframe via target="_top".
-    const authUrl = `https://lichess.org/oauth?response_type=code` + 
-      `&client_id=${LICHESS_CLIENT_ID}` + 
-      `&redirect_uri=${encodeURIComponent(redirectUri)}` + 
-      `&code_challenge_method=plain` + 
-      `&code_challenge=${codeVerifier}` + 
-      `&state=${state}` + 
-      `&scope=board:play`;
+  const authUrl = `https://lichess.org/oauth?response_type=code` + 
+    `&client_id=${LICHESS_CLIENT_ID}` + 
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` + 
+    `&code_challenge_method=plain` + 
+    `&code_challenge=${codeVerifier}` + 
+    `&state=${state}` + 
+    `&scope=board:play`;
 
-    console.log("Initiating Lichess OAuth to:", authUrl);
-
-    // Escape the sandbox
-    const a = document.createElement('a');
-    a.href = authUrl;
-    a.target = '_top';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-  } catch(err) {
-    alert("Failed to initiate Lichess login:\n" + err.message);
-    console.error(err);
+  const btn = document.getElementById('btn-lichess-login');
+  if (btn) {
+    btn.href = authUrl;
   }
 }
 
@@ -167,6 +153,7 @@ function updateLichessUI() {
     if (loginBtn) loginBtn.classList.remove('hidden');
     if (logoutBtn) logoutBtn.classList.add('hidden');
     if (menuBtn) menuBtn.classList.add('hidden');
+    prepareLichessLoginUrl();
   }
 }
 
