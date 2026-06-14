@@ -1,10 +1,7 @@
 <script>
 // --- Lichess OAuth PKCE Integration ---
-const LICHESS_CLIENT_ID = 'chess-pro-gas'; // Using a generic one or expected one
-// The redirect URI is the current GAS URL. We can get it dynamically but Google Apps Script URLs are tricky.
-// Usually, we use location.href for the authorize url if it's the exact GAS endpoint.
+const LICHESS_CLIENT_ID = 'chess-pro-gas'; 
 
-// Utilities for PKCE
 function base64URLEncode(str) {
   return btoa(String.fromCharCode.apply(null, new Uint8Array(str)))
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -32,61 +29,95 @@ let lichessToken = localStorage.getItem('lichess_token');
 let lichessUser = null;
 
 async function checkLichessLogin() {
-  // 1. Check if we just came back from Lichess auth
-  if (window.URL_PARAMS && window.URL_PARAMS.code) {
-    console.log("Found Lichess auth code, exchanging for token...");
-    await exchangeLichessCode(window.URL_PARAMS.code);
-    // remove code from URL visually if possible
-    window.history.replaceState({}, document.title, window.location.pathname);
-  }
+  try {
+    // 1. Check if we just came back from Lichess auth
+    if (window.URL_PARAMS && window.URL_PARAMS.code) {
+      console.log("Found Lichess auth code, exchanging for token...");
+      await exchangeLichessCode(window.URL_PARAMS.code);
+      // Remove code from URL visually if possible (sandbox may block this)
+      try {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } catch(e) {
+        console.warn("Could not replace history state:", e);
+      }
+    }
 
-  // 2. Check token validity and get user info
-  if (lichessToken) {
-    try {
+    // 2. Check token validity and get user info
+    if (lichessToken) {
       const res = await fetch('https://lichess.org/api/account', {
         headers: { 'Authorization': 'Bearer ' + lichessToken }
       });
       if (res.ok) {
         lichessUser = await res.json();
-        updateLichessUI();
-        return;
       } else {
         console.warn("Lichess token invalid, clearing.");
         logoutLichess();
       }
-    } catch(e) {
-      console.error("Error fetching Lichess account", e);
     }
+  } catch(e) {
+    console.error("Error verifying Lichess account", e);
+  } finally {
+    updateLichessUI();
   }
-  updateLichessUI();
 }
 
 async function loginLichess() {
-  const state = generateRandomString(32);
-  const codeVerifier = generateRandomString(64);
-  localStorage.setItem('lichess_pkce_state', state);
-  localStorage.setItem('lichess_pkce_verifier', codeVerifier);
+  try {
+    const state = generateRandomString(32);
+    const codeVerifier = generateRandomString(64);
+    localStorage.setItem('lichess_pkce_state', state);
+    localStorage.setItem('lichess_pkce_verifier', codeVerifier);
 
-  const codeChallenge = await generateCodeChallenge(codeVerifier);
-  
-  // Try to use script.google.com url or fallback to current url
-  // Note: App script macros have /exec at the end
-  const redirectUri = window.SCRIPT_URL || window.location.href.split('?')[0];
+    let codeChallengeMethod = 'S256';
+    let codeChallenge = '';
+    
+    // Safe check for Crypto API (often restricted in iframes)
+    if (window.crypto && window.crypto.subtle) {
+      codeChallenge = await generateCodeChallenge(codeVerifier);
+    } else {
+      console.warn("Crypto.subtle not available in iframe sandbox. Falling back to plain method.");
+      codeChallengeMethod = 'plain';
+      codeChallenge = codeVerifier;
+    }
+    
+    const redirectUri = window.SCRIPT_URL || window.location.href.split('?')[0];
 
-  const authUrl = `https://lichess.org/oauth?response_type=code` + 
-    `&client_id=${LICHESS_CLIENT_ID}` + 
-    `&redirect_uri=${encodeURIComponent(redirectUri)}` + 
-    `&code_challenge_method=S256` + 
-    `&code_challenge=${codeChallenge}` + 
-    `&state=${state}` + 
-    `&scope=board:play`; // Example scope
+    const authUrl = `https://lichess.org/oauth?response_type=code` + 
+      `&client_id=${LICHESS_CLIENT_ID}` + 
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` + 
+      `&code_challenge_method=${codeChallengeMethod}` + 
+      `&code_challenge=${codeChallenge}` + 
+      `&state=${state}` + 
+      `&scope=board:play`;
 
-  window.top.location.href = authUrl;
+    console.log("Initiating Lichess OAuth to:", authUrl);
+
+    // Strategy 1: Create a hidden anchor tag with target="_top" and click it
+    // This is the most reliable way to escape strict iframe sandboxes in modern browsers.
+    const a = document.createElement('a');
+    a.href = authUrl;
+    a.target = '_top';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    // Strategy 2: Direct assignment fallback
+    setTimeout(() => {
+      try {
+        window.top.location.href = authUrl;
+      } catch(e) {
+        console.warn("Direct top location assignment failed:", e);
+      }
+    }, 100);
+
+  } catch(err) {
+    alert("Failed to initiate Lichess login:\n" + err.message);
+    console.error(err);
+  }
 }
 
 async function exchangeLichessCode(code) {
   const codeVerifier = localStorage.getItem('lichess_pkce_verifier');
-  const state = localStorage.getItem('lichess_pkce_state');
   
   if (!codeVerifier) {
     console.error("Missing PKCE verifier");
@@ -116,12 +147,13 @@ async function exchangeLichessCode(code) {
       localStorage.setItem('lichess_token', lichessToken);
       localStorage.removeItem('lichess_pkce_verifier');
       localStorage.removeItem('lichess_pkce_state');
-      await checkLichessLogin();
     } else {
       console.error("Token exchange failed", data);
+      alert("Lichess Token Exchange failed: " + (data.error_description || data.error));
     }
   } catch(e) {
     console.error("Error exchanging token", e);
+    alert("Network error during Lichess token exchange.");
   }
 }
 
@@ -130,7 +162,7 @@ function logoutLichess() {
     fetch('https://lichess.org/api/token', {
       method: 'DELETE',
       headers: { 'Authorization': 'Bearer ' + lichessToken }
-    });
+    }).catch(e => console.warn(e));
   }
   lichessToken = null;
   lichessUser = null;
