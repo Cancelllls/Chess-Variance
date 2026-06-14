@@ -7,7 +7,10 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="color-scheme" content="only light">
-  <script>window.URL_PARAMS = <?!= JSON.stringify(urlParams || {}) ?>;</script>
+  <script>
+    window.URL_PARAMS = <?!= JSON.stringify(urlParams || {}) ?>;
+    window.SCRIPT_URL = <?!= JSON.stringify(scriptUrl || '') ?>;
+  </script>
   <?!= include('Stylesheet'); ?>
 </head>
   <body class="theme-dark">

@@ -71,7 +71,7 @@ async function loginLichess() {
   
   // Try to use script.google.com url or fallback to current url
   // Note: App script macros have /exec at the end
-  const redirectUri = window.location.href.split('?')[0];
+  const redirectUri = window.SCRIPT_URL || window.location.href.split('?')[0];
 
   const authUrl = `https://lichess.org/oauth?response_type=code` + 
     `&client_id=${LICHESS_CLIENT_ID}` + 
@@ -81,7 +81,7 @@ async function loginLichess() {
     `&state=${state}` + 
     `&scope=board:play`; // Example scope
 
-  window.location.href = authUrl;
+  window.top.location.href = authUrl;
 }
 
 async function exchangeLichessCode(code) {
@@ -93,7 +93,7 @@ async function exchangeLichessCode(code) {
     return;
   }
   
-  const redirectUri = window.location.href.split('?')[0];
+  const redirectUri = window.SCRIPT_URL || window.location.href.split('?')[0];
   
   try {
     const res = await fetch('https://lichess.org/api/token', {
